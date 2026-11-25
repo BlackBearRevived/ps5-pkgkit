@@ -10,8 +10,10 @@ Use each checkbox to track work. Close a milestone by linking its commit or CI r
 
 ## 1. Establish a compatibility baseline
 
-- [ ] Build Hello World from a recorded boilerplate commit. Record the title ID, content ID, content version and a SHA-256 manifest of the staged folder. Exercise the existing folder build on the test console to establish a working control.
-- [ ] Use an independent reference packager on that same staged folder. Record its revision, settings, warnings, package digest and inspection results. Keep a small redistributable fixture and an inventory of its expected files.
+- [x] Build Hello World from a recorded boilerplate commit. Record the title ID, content ID, content version and a SHA-256 manifest of the staged folder. [Hello World baseline](docs/HELLO_WORLD_BASELINE.md)
+- [ ] Exercise the same folder build on the test console to establish a working control.
+- [x] Use an independent reference packager on that same staged folder. Record its revision, settings, warnings, package digest and inspection results. [Hello World baseline](docs/HELLO_WORLD_BASELINE.md)
+- [ ] Select the reference fixture for the reader's repeatable test corpus after the hardware run. Keep its expected file inventory with the fixture.
 - [ ] Resolve the two known readiness questions with this control. The boilerplate supplies `icon0.png` and two DDS backgrounds. The reference checker also looks for `icon0.dds` and `sce_sys/about/right.sprx`. Record which findings affect package creation, installation or launch. If extra artwork is needed, generate it from the project's own asset.
 - [ ] Install and launch the control package in the existing homebrew test environment. Confirm the title identity, visible Hello World screen and access to the bundled banner asset. Record the environment actually tested, screen capture and available app logs. Firmware 6.02 is the initial candidate from previous boilerplate testing.
 
