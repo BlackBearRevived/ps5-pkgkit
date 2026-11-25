@@ -14,8 +14,9 @@ Use each checkbox to track work. Close a milestone by linking its commit or CI r
 - [ ] Exercise the same folder build on the test console to establish a working control.
 - [x] Use an independent reference packager on that same staged folder. Record its revision, settings, warnings, package digest and inspection results. [Hello World baseline](docs/HELLO_WORLD_BASELINE.md)
 - [ ] Select the reference fixture for the reader's repeatable test corpus after the hardware run. Keep its expected file inventory with the fixture.
-- [ ] Resolve the two known readiness questions with this control. The boilerplate supplies `icon0.png` and two DDS backgrounds. The reference checker also looks for `icon0.dds` and `sce_sys/about/right.sprx`. Record which findings affect package creation, installation or launch. If extra artwork is needed, generate it from the project's own asset.
-- [ ] Install and launch the control package in the existing homebrew test environment. Confirm the title identity, visible Hello World screen and access to the bundled banner asset. Record the environment actually tested, screen capture and available app logs. Firmware 6.02 is the initial candidate from previous boilerplate testing.
+- [x] Check the reference packager's readiness warnings on the console. The reference package installed and launched with the boilerplate's PNG icon and DDS backgrounds. The package lacked `icon0.dds` and `sce_sys/about/right.sprx`. [Hello World baseline](docs/HELLO_WORLD_BASELINE.md)
+- [x] Install and launch the control package in the existing homebrew test environment. Verify the title identity and the banner asset in the installed package mount. [Hello World baseline](docs/HELLO_WORLD_BASELINE.md)
+- [ ] Capture the visible Hello World screen and record the firmware version for this run. Firmware 6.02 is the initial candidate from previous boilerplate testing.
 
 **Acceptance.** A known-working reference package and its source manifest let us distinguish writer defects from title or console compatibility issues. If the control fails, record the failing stage and error before judging Python output against it.
 
