@@ -31,4 +31,6 @@ The reference builder rewrote `eboot.bin`, `sce_module/libc.prx` and `sce_sys/pa
 
 ## Console status
 
-The first preflight reached the console's folder deployment service. A different title, `PPSA99006`, was running, and the PS5Upload package installer and helper ports refused connections. Both the folder launch and package install tests remain pending. Firmware for this run has yet to be confirmed.
+The first preflight found `PPSA99006` running. The retry found the console idle and staged the reference package over FTP at `/data/ps5-pkg-test/f4746fdf-PS5-PKG-Hello-World.pkg`. The transfer read-back matched the host package's SHA-256.
+
+The PS5Upload and etaHEN network installer ports refused connections during the retry. The console had no installed title entry for `PPSA99771`. Folder launch, package installation and package launch remain pending. Firmware for this run has yet to be confirmed.
