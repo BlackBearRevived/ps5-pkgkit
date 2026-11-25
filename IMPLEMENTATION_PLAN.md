@@ -27,6 +27,7 @@ Use each checkbox to track work. Close a milestone by linking its commit or CI r
 - [ ] Expose `build_package(source_dir, output_path)` and `verify_package(path)`. Return structured results with title metadata, warnings, failures and output size. Keep CLI formatting and exit codes in the CLI layer.
 - [ ] Implement `ps5-pkg build TITLE_FOLDER --output FILE.pkg` and `ps5-pkg verify FILE.pkg`. Include path-specific diagnostics and documented nonzero exit codes. Leave an existing destination intact on failure.
 - [ ] Validate root `eboot.bin`, readable `sce_sys/param.json`, identity fields and supported title type. Define consistent handling of case collisions, traversal, symlinks, empty files and directories. Exercise Unicode paths on every supported OS.
+- [x] Add `inspect_source(path)` and `ps5-pkg inspect-source TITLE_FOLDER` as a read-only preflight. It validates the base-app identity, rejects unsupported paths and links, and returns a deterministic per-file SHA-256 inventory.
 
 **Acceptance.** Tests invoke the installed command and import the library from outside the checkout. Both interfaces report the same validation outcomes, and scanning preserves the source manifest.
 
@@ -40,6 +41,8 @@ Use each checkbox to track work. Close a milestone by linking its commit or CI r
 **Acceptance.** The reader independently validates the reference fixture and identifies the failing check for each damaged fixture.
 
 ## 4. Implement the standalone writer
+
+The reference profile relies on a patched authentication path. Writer and console-installation milestones are pending a supported signing and installation route.
 
 - [ ] Create a stable file inventory and a layout plan containing directories, file extents, metadata, padding and final size. Unit-test the plan with empty, single-file and block-boundary cases.
 - [ ] Implement the filesystem-image writer and package container for the base-app profile demonstrated in milestone 1. Carry through the entry executable, runtime module, app assets and title identity. Generate the metadata and integrity records required by that profile.

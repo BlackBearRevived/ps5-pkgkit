@@ -6,12 +6,16 @@ import json
 from pathlib import Path
 import sys
 
+from .source import SourceError, inspect_source
 from .verification import VerificationError, verify_package
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="ps5-pkg", description="Verify existing PS5 application packages.")
+    parser = argparse.ArgumentParser(prog="ps5-pkg", description="Inspect PS5 title folders and verify existing packages.")
     commands = parser.add_subparsers(dest="command", required=True)
+    inspect = commands.add_parser("inspect-source", help="validate and hash a staged title folder")
+    inspect.add_argument("source", type=Path)
+    inspect.add_argument("--json", action="store_true", help="print a machine-readable report")
     verify = commands.add_parser("verify", help="check package structure and container checksums")
     verify.add_argument("package", type=Path)
     verify.add_argument("--sha256", help="compare the entire file with a trusted SHA-256")
@@ -19,8 +23,11 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     try:
-        report = verify_package(args.package, expected_sha256=args.sha256)
-    except (OSError, VerificationError) as error:
+        if args.command == "inspect-source":
+            report = inspect_source(args.source)
+        else:
+            report = verify_package(args.package, expected_sha256=args.sha256)
+    except (OSError, SourceError, VerificationError) as error:
         if args.json:
             print(json.dumps({"error": str(error)}), file=sys.stderr)
         else:
@@ -29,6 +36,11 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.json:
         print(json.dumps(asdict(report)))
+    elif args.command == "inspect-source":
+        print(f"Source verified for {report.title_id} {report.content_version}")
+        print(f"Content ID: {report.content_id}")
+        print(f"Files: {len(report.files)} ({report.total_size} bytes)")
+        print(f"Manifest SHA-256: {report.manifest_sha256}")
     else:
         print(f"Container verified for {report.title_id} {report.content_version}")
         print(f"Content ID: {report.content_id}")
