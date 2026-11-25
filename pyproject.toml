@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ps5-pkg"
+version = "0.1.0.dev0"
+description = "Read and verify existing PS5 application packages offline."
+readme = "README.md"
+requires-python = ">=3.11"
+
+[project.scripts]
+ps5-pkg = "ps5_pkg.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

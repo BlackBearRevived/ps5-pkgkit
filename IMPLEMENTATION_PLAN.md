@@ -22,7 +22,8 @@ Use each checkbox to track work. Close a milestone by linking its commit or CI r
 
 ## 2. Define the library and CLI contract
 
-- [ ] Add `pyproject.toml`, an importable `ps5_pkg` package and the `ps5-pkg` console entry point. Choose the supported Python floor after checking dependency and wheel support on Linux, Windows and macOS.
+- [x] Add `pyproject.toml`, an importable `ps5_pkg` package and the `ps5-pkg` console entry point. Start with Python 3.11 and the standard library at runtime.
+- [x] Implement `ps5-pkg verify FILE.pkg` and `ps5_pkg.verify_package(path)` for the reference title's package profile. Report structural and container checksum errors, and accept a trusted digest for whole-file verification.
 - [ ] Expose `build_package(source_dir, output_path)` and `verify_package(path)`. Return structured results with title metadata, warnings, failures and output size. Keep CLI formatting and exit codes in the CLI layer.
 - [ ] Implement `ps5-pkg build TITLE_FOLDER --output FILE.pkg` and `ps5-pkg verify FILE.pkg`. Include path-specific diagnostics and documented nonzero exit codes. Leave an existing destination intact on failure.
 - [ ] Validate root `eboot.bin`, readable `sce_sys/param.json`, identity fields and supported title type. Define consistent handling of case collisions, traversal, symlinks, empty files and directories. Exercise Unicode paths on every supported OS.
