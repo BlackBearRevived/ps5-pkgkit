@@ -10,16 +10,44 @@ on:
     tags: ["v[0-9]+.[0-9]+.[0-9]+"]
   pull_request:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing version tag to build and publish, such as v0.1.0
+        type: string
+        required: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: build-${{ github.ref }}
+  group: build-${{ inputs.release_tag && format('refs/tags/{0}', inputs.release_tag) || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  source:
+    runs-on: ubuntu-24.04
+    outputs:
+      sha: ${{ steps.resolve.outputs.sha }}
+      release_tag: ${{ steps.resolve.outputs.release_tag }}
+    steps:
+      - name: Resolve the source commit
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag || (github.ref_type == 'tag' && github.ref_name) || '' }}
+        run: |
+          sha="$GITHUB_SHA"
+          if [[ -n "$RELEASE_TAG" ]]; then
+            if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "Expected a release tag in the form vMAJOR.MINOR.PATCH" >&2
+              exit 1
+            fi
+            sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/refs%2Ftags%2F$RELEASE_TAG" --jq .sha)
+          fi
+          printf 'sha=%s\nrelease_tag=%s\n' "$sha" "$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+
   test:
+    needs: source
     strategy:
       fail-fast: false
       matrix:
@@ -30,6 +58,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          ref: ${{ needs.source.outputs.sha }}
           persist-credentials: false
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
@@ -61,14 +90,16 @@ jobs:
           ps5-pkg verify smoke.pkg
 
   package:
-    needs: test
+    needs: [source, test]
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     env:
       PYTHONDONTWRITEBYTECODE: "1"
+      RELEASE_TAG: ${{ needs.source.outputs.release_tag }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          ref: ${{ needs.source.outputs.sha }}
           persist-credentials: false
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
@@ -78,10 +109,12 @@ jobs:
       - name: Build and check the wheel and source distribution
         run: |
           python -m pip install build twine
-          version=$(python -c 'from ps5_pkg import __version__; print(__version__)')
-          if [[ $GITHUB_REF_TYPE == tag && $GITHUB_REF_NAME != "v$version" ]]; then
-            echo "Tag $GITHUB_REF_NAME does not match package version $version" >&2
-            exit 2
+          if [[ -n "$RELEASE_TAG" ]]; then
+            version=$(PYTHONPATH=src python -c 'from ps5_pkg import __version__; print(__version__)')
+            if [[ "$RELEASE_TAG" != "v$version" ]]; then
+              echo "Tag $RELEASE_TAG does not match package version $version" >&2
+              exit 2
+            fi
           fi
           python -m build
           python -m twine check --strict dist/*.whl dist/*.tar.gz
@@ -112,11 +145,11 @@ jobs:
               ./venv/bin/ps5-pkg verify smoke.pkg)
           done
       - name: Build and test the source ZIP and zipapp
-        if: github.ref_type == 'tag'
+        if: needs.source.outputs.release_tag != ''
         run: |
           set -euo pipefail
           git archive --format=zip --prefix=ps5-pkg/ \
-            --output "dist/ps5-pkg-$GITHUB_REF_NAME.zip" HEAD
+            --output "dist/ps5-pkg-$RELEASE_TAG.zip" HEAD
           stage=$(mktemp -d "$RUNNER_TEMP/pkg-zipapp.XXXXXX")
           cp -r src/ps5_pkg "$stage/"
           printf '%s\n' 'import sys' 'from ps5_pkg.cli import main' 'sys.exit(main())' \
@@ -155,8 +188,12 @@ jobs:
           subject-checksums: dist/SHA256SUMS.txt
 
   release:
-    needs: attest
-    if: github.ref_type == 'tag'
+    needs: [source, package, attest]
+    if: >-
+      ${{ !cancelled() && needs.source.outputs.release_tag != '' &&
+          needs.package.result == 'success' &&
+          (needs.attest.result == 'success' ||
+           (github.event.repository.private && needs.attest.result == 'skipped')) }}
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -168,7 +205,14 @@ jobs:
       - name: Publish the verified artifacts
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.source.outputs.release_tag }}
+          SOURCE_SHA: ${{ needs.source.outputs.sha }}
         run: |
+          tag_sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/refs%2Ftags%2F$RELEASE_TAG" --jq .sha)
+          if [[ "$tag_sha" != "$SOURCE_SHA" ]]; then
+            echo "Tag $RELEASE_TAG moved while the distributions were building" >&2
+            exit 1
+          fi
           (cd dist && sha256sum -c --strict SHA256SUMS.txt)
-          gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" \
-            --verify-tag --generate-notes --title "PS5 PKG $GITHUB_REF_NAME"
+          gh release create "$RELEASE_TAG" dist/* --repo "$GITHUB_REPOSITORY" \
+            --verify-tag --generate-notes --title "PS5 PKG $RELEASE_TAG"
