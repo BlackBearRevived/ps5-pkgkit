@@ -1,14 +1,27 @@
+"""Test file ordering, metadata placement, and inner-image plan rules."""
+
 import unittest
 
 from ps5_pkgkit.format import plan
 
 
 def source(paths):
+    """Materialize a sequence of source paths and sizes for the planner.
+
+    Args:
+        paths (Iterable of tuples): Source-relative paths paired with byte
+            lengths.
+
+    Returns:
+        A list of path and size pairs in input order.
+    """
     return [(path, size) for path, size in paths]
 
 
 class PlanTests(unittest.TestCase):
+    """Exercise layout decisions without storing or reading file bytes."""
     def test_reproduces_the_webbrowser_geometry(self):
+        """Compare data end and metadata spans against measured geometry."""
         built = plan.build_tree(source([
             ("sce_sys/about/right.sprx", 12752),
             ("sce_sys/keystone", 96),
@@ -27,6 +40,7 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(on_disk, [0, 0x10000, 0x20000, 0x30000, 0x40000])
 
     def test_missing_keystone_is_generated_first(self):
+        """Assign AFID zero to the synthesized 96-byte keystone."""
         built = plan.build_tree(source([("eboot.bin", 4096)]))
         keystone = built.files[built.afid_order[0]]
         self.assertEqual(keystone.path, "sce_sys/keystone")
@@ -35,18 +49,21 @@ class PlanTests(unittest.TestCase):
         self.assertTrue(keystone.sce_sys)
 
     def test_case_collisions_are_refused(self):
+        """Reject collisions involving parent paths and empty directories."""
         with self.assertRaises(ValueError):
             plan.build_tree(source([("Data/a", 1), ("data/b", 2)]))
         with self.assertRaises(ValueError):
             plan.build_tree(source([("data/a", 1)]), ["Data"])
 
     def test_empty_directories_are_kept(self):
+        """Check parent and nested empty directories in the resulting plan."""
         built = plan.build_tree(source([("eboot.bin", 1)]), ["assets", "assets/empty"])
         paths = {directory.path for directory in built.dirs}
         self.assertIn("assets", paths)
         self.assertIn("assets/empty", paths)
 
     def test_modules_carry_the_module_flag_and_keystone_never_does(self):
+        """Flag executables as modules and keep the keystone a data file."""
         built = plan.build_tree(source([
             ("eboot.bin", 64),
             ("sce_module/libc.prx", 32),
@@ -60,6 +77,7 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(flags["sce_sys/keystone"], 0x20030)
 
     def test_spread_keeps_every_file_in_its_own_16_byte_unit(self):
+        """Compare packed and spread file starts for a many-file fixture."""
         files = [(f"d/{index:03}", 4000) for index in range(200)]
         packed = plan.build_tree(source(files))
         cursor = 0

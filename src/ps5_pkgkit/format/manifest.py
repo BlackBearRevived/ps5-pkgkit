@@ -15,6 +15,26 @@ from .playgo import PlayGo
 
 @dataclass(slots=True)
 class ManifestParams:
+    """Package and image details for the install manifest.
+
+    Attributes:
+        facts: Content-container geometry, named entries, and digests.
+        content_id: Package content identifier.
+        content_type: Numeric type used to select the manifest content class.
+        param_json: Packaged title metadata.
+        content_version: Packed BCD content version.
+        cnt_offset: Absolute package offset of the container.
+        si_offset: Absolute package offset of the install metadata.
+        outer_size: Outer image length in bytes.
+        inner_size: Logical inner-image length in bytes.
+        seed: Outer image seed recorded in the manifest.
+        game_digest: Digest of the outer image superblock.
+        icv: Superblock integrity check value.
+        playgo: Generated PlayGo tables and chunk geometry.
+        outer: Outer image block layout.
+        naps_len: Layout descriptor length in bytes.
+        plan: Inner image file and metadata plan.
+    """
     facts: Facts
     content_id: str
     content_type: int
@@ -34,6 +54,14 @@ class ManifestParams:
 
 
 def _digest(xml: list[str], indent: int, tag: str, value: bytes) -> None:
+    """Append the XML element for a digest to the output.
+
+    Args:
+        xml: Output lines to extend in place.
+        indent: Indentation of the opening and closing tags in spaces.
+        tag: Trusted XML tag name.
+        value: Raw digest bytes to print as hexadecimal octets.
+    """
     pad = " " * indent
     xml.append(f"{pad}<{tag}>\n")
     for at in range(0, len(value), 16):
@@ -43,10 +71,19 @@ def _digest(xml: list[str], indent: int, tag: str, value: bytes) -> None:
 
 
 def _dotted_version(word: int) -> str:
+    """Render a packed BCD content version in 2-3-3 format."""
     return f"{(word >> 24) & 0xFF:02x}.{(word >> 12) & 0xFFF:03x}.{word & 0xFFF:03x}"
 
 
 def _dotted_firmware(word: str) -> str:
+    """Render a firmware word as four dotted components.
+
+    Args:
+        word: Hexadecimal firmware value, optionally prefixed with 0x.
+
+    Returns:
+        Dotted version string, or 0.0.0.0 if the filtered word is not 16 digits.
+    """
     digits = word.strip().removeprefix("0x").removeprefix("0X")
     digits = "".join(char for char in digits if char in "0123456789abcdefABCDEF")
     if len(digits) != 16:
@@ -55,11 +92,13 @@ def _dotted_firmware(word: str) -> str:
 
 
 def _escape(text: str) -> str:
+    """Escape characters reserved in XML text and double-quoted attributes."""
     return (text.replace("&", "&amp;").replace("<", "&lt;")
             .replace(">", "&gt;").replace('"', "&quot;"))
 
 
 def _param_field(param_json: bytes, key: str) -> str | None:
+    """Read a string field from title metadata, or return None."""
     parsed = paramjson.parse(param_json)
     if isinstance(parsed, dict) and isinstance(parsed.get(key), str):
         return parsed[key]
@@ -67,11 +106,20 @@ def _param_field(param_json: bytes, key: str) -> str | None:
 
 
 def _inner_file_index(plan: Plan, inode: int) -> int | None:
+    """Map a file inode to its index in the plan, or return None."""
     first = 4 + len(plan.dirs)
     return inode - first if inode >= first else None
 
 
 def _inner_dir(xml: list[str], p: ManifestParams, index: int, depth: int) -> None:
+    """Append a planned inner directory and its children to the XML.
+
+    Args:
+        xml: Output lines to extend in place.
+        p: Manifest inputs holding the inner-image plan.
+        index: Directory index in the plan.
+        depth: XML nesting depth used for indentation.
+    """
     plan = p.plan
     directory = plan.dirs[index]
     offset, byte_count = plan.metadata.dirs[index]
@@ -102,6 +150,14 @@ def _inner_dir(xml: list[str], p: ManifestParams, index: int, depth: int) -> Non
 
 
 def build(p: ManifestParams) -> bytes:
+    """Serialize the install manifest for the completed package layout.
+
+    Args:
+        p: Package identity, image geometry, digests, and PlayGo tables.
+
+    Returns:
+        UTF-8 bytes for common/etc/pfsimage.xml.
+    """
     mount = p.plan
     facts = p.facts
     add_on = p.content_type == 0x21
@@ -116,6 +172,7 @@ def build(p: ManifestParams) -> bytes:
     meta_region = mount.metadata.blocks * c.BLOCK
 
     def blocks(byte_count: int) -> int:
+        """Round a byte count up to at least one filesystem block."""
         return max((byte_count + c.BLOCK - 1) // c.BLOCK, 1)
 
     xml: list[str] = []

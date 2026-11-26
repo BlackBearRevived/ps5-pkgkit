@@ -17,18 +17,28 @@ BLOCK = 0x10000
 
 
 def le64(data: bytes, at: int) -> int:
+    """Read an unsigned little-endian 64-bit value from a byte offset."""
     return int.from_bytes(data[at:at + 8], "little")
 
 
 def le32(data: bytes, at: int) -> int:
+    """Read an unsigned little-endian 32-bit value from a byte offset."""
     return int.from_bytes(data[at:at + 4], "little")
 
 
 def be32(data: bytes, at: int) -> int:
+    """Read an unsigned big-endian 32-bit value from a byte offset."""
     return int.from_bytes(data[at:at + 4], "big")
 
 
 def main() -> int:
+    """Print the image geometry, container entries, and ZIP member list.
+
+    The first command-line argument is the path to the package to inspect.
+
+    Returns:
+        Zero after printing the report.
+    """
     path = Path(sys.argv[1])
     data = path.read_bytes()
     print(f"file {path.name}: {len(data)} bytes sha256 {hashlib.sha256(data).hexdigest()}")

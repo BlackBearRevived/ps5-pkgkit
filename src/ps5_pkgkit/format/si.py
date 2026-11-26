@@ -1,4 +1,4 @@
-"""The install-metadata (SI) segment: chunk CRCs, metric records and the STORED ZIP."""
+"""Serialize the install-metadata CRC table, metrics, and stored ZIP."""
 
 from __future__ import annotations
 
@@ -17,7 +17,16 @@ FIXED_DATE = (1980, 1, 1, 0, 0, 0)
 
 
 def chunk_crc(mount_image: bytes) -> bytes:
-    """The 64 KiB CRC reduction over ``[FIH][outer][CNT]``, little-endian per block."""
+    """Compute the PlayGo CRC table for the mount image.
+
+    Args:
+        mount_image: Finalized-image header, outer image, and container
+            concatenated.
+
+    Returns:
+        Little-endian CRC-32C values for successive 64 KiB blocks, including any
+        trailing partial block.
+    """
     blocks = (len(mount_image) + BLOCK - 1) // BLOCK
     output = bytearray(blocks * 4)
     for index in range(blocks):
@@ -28,7 +37,14 @@ def chunk_crc(mount_image: bytes) -> bytes:
 
 
 def naps_meta_300(inner_size: int) -> bytes:
-    """One 48-byte ``naps_meta_300/301/302/308`` record."""
+    """Build a fixed-size NAPS mount metadata record.
+
+    Args:
+        inner_size: Logical inner-image size in bytes.
+
+    Returns:
+        The 48-byte record shared by the 300, 301, 302, and 308 members.
+    """
     r = max(inner_size - BLOCK, 0)
     data = bytearray(48)
     data[0x10:0x18] = r.to_bytes(8, "little")
@@ -39,6 +55,7 @@ def naps_meta_300(inner_size: int) -> bytes:
 
 
 def _dos_time(date_time: tuple[int, int, int, int, int, int]) -> tuple[int, int]:
+    """Pack a ZIP timestamp into DOS time and date fields, in that order."""
     year, month, day, hour, minute, second = date_time
     return ((hour << 11) | (minute << 5) | (second // 2),
             ((year - 1980) << 9) | (month << 5) | day)
@@ -46,7 +63,16 @@ def _dos_time(date_time: tuple[int, int, int, int, int, int]) -> tuple[int, int]
 
 def zip_members(members: list[tuple[str, bytes]],
                 date_time: tuple[int, int, int, int, int, int] | None = None) -> bytes:
-    """A STORED ZIP with the members in the order given, laid out as the console's reads."""
+    """Serialize an uncompressed ZIP archive in the given member order.
+
+    Args:
+        members: Filename and payload pairs in archive order.
+        date_time: Optional (year, month, day, hour, minute, second) used for
+            every member. Uses the fixed default timestamp when omitted.
+
+    Returns:
+        Complete ZIP archive bytes.
+    """
     from .crypto import crc32
 
     stamp = date_time or FIXED_DATE
@@ -74,12 +100,25 @@ def zip_members(members: list[tuple[str, bytes]],
 
 
 def _tlv(tag: bytes, payload: bytes) -> bytes:
+    """Pack a four-byte tag, length, and payload as one metric record."""
     return bytes([tag[3], tag[2], tag[1], tag[0], 1, 0, 0, 0]) + \
         len(payload).to_bytes(8, "little") + payload
 
 
 def _block_map(files: list[tuple[str, int, int]], data_end: int,
                meta_base: int, mount_size: int):
+    """Build metric block records for the stored inner image.
+
+    Args:
+        files: Triples of file path, logical byte offset, and size in AFID
+            order.
+        data_end: Logical byte position at the end of file data.
+        meta_base: Starting byte position of the metadata region.
+        mount_size: Logical size of the mount in bytes.
+
+    Returns:
+        Metric block tuples for file data, padding, and metadata.
+    """
     blocks = []
     for index, (_, offset, size) in enumerate(files):
         blocks.append((offset, size, size, size, 0, 0x40090000, index, offset))
@@ -100,7 +139,27 @@ def naps_meta_18(stored_size: int, mount_size: int, block_digests: list[bytes],
                  file_digests: list[bytes], meta: bytes,
                  files: list[tuple[str, int, int]], data_end: int, meta_base: int,
                  game_digest: bytes, blocks=None) -> bytes:
-    """The metric TLV stream, AES-128-XTS encrypted as one data unit."""
+    """Build the encrypted NAPS metric stream for install metadata.
+
+    Args:
+        stored_size: Stored inner-image length in bytes.
+        mount_size: Logical mount length in bytes.
+        block_digests: Digests of stored blocks, in block order.
+        file_digests: File payload digests in AFID order.
+        meta: Plaintext inner-image metadata bytes.
+        files: Triples of path, logical offset, and size in AFID order.
+        data_end: Logical byte offset at the end of file data.
+        meta_base: Logical byte offset of the metadata region.
+        game_digest: Digest of the outer superblock.
+        blocks (list of tuples or None): Optional prepared metric block map,
+            otherwise derived from the stored layout.
+
+    Returns:
+        The TLV stream encrypted as one AES-128-XTS data unit.
+
+    Raises:
+        ValueError: The assembled stream is not aligned to a whole AES block.
+    """
     output = bytearray()
     inner_blocks = (stored_size + BLOCK - 1) // BLOCK
     phdr = b"".join(value.to_bytes(4, "little")
@@ -184,7 +243,14 @@ def naps_meta_18(stored_size: int, mount_size: int, block_digests: list[bytes],
 
 
 def kraken_blocks(image) -> list[tuple]:
-    """The metric block map of a Kraken-compressed image."""
+    """Build metric block records for a Kraken-compressed image.
+
+    Args:
+        image (KrakenImage): Compressed image with its block descriptors.
+
+    Returns:
+        One metric block tuple per stored block, in image order.
+    """
     blocks = []
     for block in image.blocks:
         compressed = any(is_lz for _, is_lz in block.halves)
@@ -204,6 +270,18 @@ def kraken_blocks(image) -> list[tuple]:
 
 def kraken_meta_18(image, mount_size: int, metadata_plain: bytes,
                    files: list[tuple[str, int, int]], game_digest: bytes) -> bytes:
+    """Build the NAPS metric stream for a compressed image.
+
+    Args:
+        image (KrakenImage): Compressed image and its stored block layout.
+        mount_size: Logical mount length in bytes.
+        metadata_plain: Plaintext inner-image metadata.
+        files: Triples of path, logical offset, and size in AFID order.
+        game_digest: Digest of the outer superblock.
+
+    Returns:
+        Encrypted NAPS metric stream bytes.
+    """
     from .crypto import sha3 as digest
 
     block_digests = [digest(image.image[at:at + BLOCK])
@@ -215,7 +293,18 @@ def kraken_meta_18(image, mount_size: int, metadata_plain: bytes,
 
 
 def parse_meta_18(blob: bytes) -> list[tuple[bytes, bytes]]:
-    """Decrypt a ``naps_meta_18.dat`` blob into its ``(tag, payload)`` records."""
+    """Decrypt and read the NAPS metric stream.
+
+    Args:
+        blob: Encrypted contents of naps_meta_18.dat.
+
+    Returns:
+        Pairs of raw tag and payload bytes, in record order.
+
+    Raises:
+        ValueError: The encrypted data unit has an invalid length or a TLV
+            header is truncated.
+    """
     plain = Xts(NAPS_META_18_DATA_KEY, NAPS_META_18_TWEAK_KEY).decrypt(
         NAPS_META_18_TWEAK_SECTOR, blob)
     records = []

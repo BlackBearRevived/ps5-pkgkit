@@ -10,6 +10,18 @@ E = 65537
 
 
 def pkcs1_encrypt(modulus: bytes, message: bytes) -> bytes:
+    """Apply the package format's deterministic RSA encoding.
+
+    Args:
+        modulus: Big-endian RSA modulus.
+        message: Message bytes to pad and encode.
+
+    Returns:
+        Big-endian result with the same length as the modulus.
+
+    Raises:
+        ValueError: The modulus is too short for the message and its padding.
+    """
     size = len(modulus)
     if size < 11 or len(message) + 11 > size:
         raise ValueError("message does not fit the modulus")

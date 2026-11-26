@@ -3,10 +3,9 @@
 # Copyright (C) 2026 BlackBearReloaded
 # SPDX-License-Identifier: GPL-3.0-or-later
 
-"""Build, inspect and verify PS5 packages from a checkout.
+"""Build, inspect, and verify PS5 packages from a checkout.
 
-Example: ./ps5_pkgkit.py build dist/PPSA99771 -o HelloWorld.pkg
-Run with --help for all options.
+Run ./ps5pkgkit.py --help for the available commands and options.
 """
 
 import os

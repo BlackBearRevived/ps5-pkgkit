@@ -1,3 +1,9 @@
+"""Test package creation and verification with the Hello World fixture.
+
+Use the staged title and reference package from the configured fixture
+directory. The parity test reuses the reference ZIP timestamp.
+"""
+
 import hashlib
 import io
 import os
@@ -17,7 +23,9 @@ PACKAGE = FIXTURE / "PS5-PKG-Hello-World.pkg"
 
 @unittest.skipUnless(SOURCE.is_dir(), "reference source folder is not available")
 class BuildEndToEndTests(unittest.TestCase):
+    """Exercise the uncompressed build path with a real staged title."""
     def test_builds_a_verifiable_package(self):
+        """Check that the stored build verifies against its returned digest."""
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "hello.pkg"
             result = build_package(SOURCE, output, kraken=False)
@@ -33,6 +41,7 @@ class BuildEndToEndTests(unittest.TestCase):
             self.assertEqual(verified.container_entries, 19)
 
     def test_content_id_override_is_applied(self):
+        """Verify the override in the build result and the emitted container."""
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "hello.pkg"
             result = build_package(
@@ -42,6 +51,7 @@ class BuildEndToEndTests(unittest.TestCase):
             self.assertEqual(verify_package(output).content_id, result.content_id)
 
     def test_a_failed_build_leaves_no_output(self):
+        """Reject a bad build without leaving the output or partial file."""
         with tempfile.TemporaryDirectory() as directory:
             output = Path(directory) / "hello.pkg"
             with self.assertRaises(BuildError):
@@ -53,7 +63,9 @@ class BuildEndToEndTests(unittest.TestCase):
 @unittest.skipUnless(PACKAGE.is_file() and SOURCE.is_dir(),
                      "reference artifacts are not available")
 class ReferenceParityTest(unittest.TestCase):
+    """Compare the compressed build against the reference byte stream."""
     def test_compressed_build_is_byte_identical(self):
+        """Reuse the reference ZIP timestamp and compare SHA-256 and size."""
         data = PACKAGE.read_bytes()
         cnt_at = int.from_bytes(data[0x58:0x60], "little")
         si_at = cnt_at + int.from_bytes(data[cnt_at + 0x7C:cnt_at + 0x80], "big")

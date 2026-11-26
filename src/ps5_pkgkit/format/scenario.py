@@ -21,16 +21,32 @@ LANGUAGES = (
 
 @dataclass(frozen=True, slots=True)
 class GameLanguages:
+    """The supported languages and default for a PlayGo scenario.
+
+    Attributes:
+        supported: Supported language codes in scenario order.
+        default: Default language code among the supported languages.
+    """
     supported: tuple[str, ...]
     default: str
 
 
 def _known(code: str | None) -> str | None:
+    """Return a recognized language code, or None for any other value."""
     return code if code in LANGUAGES else None
 
 
 def game_languages(scenario: bytes, param_json: bytes) -> GameLanguages | None:
-    """The game's own languages and default, from its stale scenario or its param.json."""
+    """Resolve a title's PlayGo languages and default from its metadata.
+
+    Args:
+        scenario: Existing scenario JSON, or empty bytes if absent.
+        param_json: Title metadata used as a fallback.
+
+    Returns:
+        Languages from a usable scenario, or the full list with the metadata
+        default. Returns None if neither source supplies a known language.
+    """
     parsed = paramjson.parse(scenario) if scenario else None
     if isinstance(parsed, dict):
         supported: list[str] = []
@@ -60,6 +76,15 @@ def game_languages(scenario: bytes, param_json: bytes) -> GameLanguages | None:
 
 
 def scenario_json(supported: tuple[str, ...], default: str) -> bytes:
+    """Serialize a single-scenario PlayGo document.
+
+    Args:
+        supported: Supported language codes in the desired order.
+        default: Default language code to record.
+
+    Returns:
+        The UTF-8 JSON document.
+    """
     names = ",".join(
         f'"{code}":{{"title":"Scenario #0","description":"Scenario #0"}}'
         for code in supported)
@@ -75,7 +100,17 @@ def scenario_json(supported: tuple[str, ...], default: str) -> bytes:
 
 
 def build(scenario: bytes, param_json: bytes, language: str | None = None) -> bytes:
-    """The document for a package: a chosen language, else the game's own, else all of them."""
+    """Build a PlayGo scenario for the packaged title.
+
+    Args:
+        scenario: Existing scenario JSON, or empty bytes if absent.
+        param_json: Packaged title metadata.
+        language: Optional known language to use as the only supported language.
+
+    Returns:
+        Scenario JSON using the requested language, the title's languages, or
+        all known languages with en-US as the fallback default.
+    """
     chosen = _known(language)
     if chosen:
         return scenario_json((chosen,), chosen)

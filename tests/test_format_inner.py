@@ -1,9 +1,12 @@
+"""Exercise stored inner-image serialization with synthetic file payloads."""
+
 import unittest
 
 from ps5_pkgkit.format import constants, inner, plan
 
 
 def make_plan():
+    """Plan the staged fixture's executable, metadata, icon, and asset files."""
     return plan.build_tree([
         ("eboot.bin", 0x400),
         ("sce_sys/param.json", 0x80),
@@ -13,12 +16,29 @@ def make_plan():
 
 
 def payload(path, size):
+    """Generate deterministic fixture bytes from a path and length.
+
+    Args:
+        path (str): Fixture path whose UTF-8 bytes seed the pattern.
+        size (int): Number of bytes to generate.
+
+    Returns:
+        Deterministic payload bytes.
+    """
     seed = sum(path.encode()) & 0xFF
     return bytes((seed + index * 13) & 0xFF for index in range(size))
 
 
 class InnerImageTests(unittest.TestCase):
+    """Byte layout and inode checks for a small stored image.
+
+    Attributes:
+        plan: Layout for the synthetic source files.
+        passcode: Passcode for the generated keystone.
+        image: Stored image rebuilt for each test.
+    """
     def setUp(self):
+        """Build the same stored fixture image fresh for each test."""
         self.plan = make_plan()
         self.passcode = "00000000000000000000000000000000"
         self.image = inner.write_stored(
@@ -27,16 +47,19 @@ class InnerImageTests(unittest.TestCase):
         )
 
     def test_image_is_the_mount_size(self):
+        """Compare stored bytes and block count with the planned mount."""
         self.assertEqual(len(self.image.image), self.plan.ndblock * constants.BLOCK)
         self.assertEqual(self.image.disk_blocks, self.plan.ndblock)
 
     def test_keystone_is_stored_at_offset_zero(self):
+        """Match the first 96 bytes to the generated keystone record."""
         expected = inner.keystone(self.passcode)
         self.assertEqual(self.image.image[:96], expected)
         self.assertEqual(expected[:8], b"keystone")
         self.assertEqual(len(expected), 96)
 
     def test_superblock_records_the_geometry(self):
+        """Check inode count, mount size, and inode-table block offset."""
         base = self.plan.meta_base
         superblock = self.image.image[base:base + constants.BLOCK]
         self.assertEqual(int.from_bytes(superblock[0x30:0x38], "little"), 4 + 3 + 5)
@@ -47,6 +70,7 @@ class InnerImageTests(unittest.TestCase):
         self.assertEqual(superblock[0x1C:0x1E], (0x18).to_bytes(2, "little"))
 
     def test_block_info_table_sits_after_the_data(self):
+        """Check the table's placement, template rows, and final value."""
         at = self.image.block_info_offset
         table = self.image.image[at:at + 0x100]
         self.assertEqual(int.from_bytes(table[0:4], "little"), inner.BLOCK_INFO_TEMPLATE)
@@ -57,6 +81,7 @@ class InnerImageTests(unittest.TestCase):
         self.assertEqual(int.from_bytes(table[-8:-4], "little"), last)
 
     def test_super_root_dirents_name_the_tables(self):
+        """Check the first directory entry's table inode, type, and name."""
         at = self.plan.metadata.super_root[0]
         entry = self.image.image[at:at + 16 + 21]
         self.assertEqual(int.from_bytes(entry[0:4], "little"), constants.INODE_FLT_INODE)
@@ -65,6 +90,7 @@ class InnerImageTests(unittest.TestCase):
         self.assertEqual(entry[16:37], b"inode_flat_path_table")
 
     def test_keystone_inode_carries_afid_zero(self):
+        """Check the generated file's AFID, system mode, and length."""
         index = 4 + len(self.plan.dirs) + next(
             position for position, item in enumerate(self.plan.files)
             if item.path == constants.KEYSTONE

@@ -16,13 +16,28 @@ HEADER_LEN = 16
 
 
 def dirent_size(name: str) -> int:
-    """A dirent's stored size: the header, the UTF-8 name, padded to 8 bytes."""
+    """Compute the stored size of a single directory entry.
+
+    Args:
+        name: Entry name, encoded as UTF-8 in the directory.
+
+    Returns:
+        The entry header and name length rounded up to an 8-byte boundary.
+    """
     raw = len(name.encode("utf-8")) + HEADER_LEN + 1
     return (raw + 7) // 8 * 8
 
 
 def dirent_extents(names: Iterable[str]) -> list[tuple[int, int]]:
-    """Each dirent's ``(offset, stored size)`` inside its directory."""
+    """Compute block-safe directory entry positions.
+
+    Args:
+        names: Entry names in directory order.
+
+    Returns:
+        One (byte offset, stored size) pair per entry, in input order. An entry
+        may include padding to the end of its block.
+    """
     output: list[tuple[int, int]] = []
     offset = 0
     for name in names:
@@ -39,7 +54,14 @@ def dirent_extents(names: Iterable[str]) -> list[tuple[int, int]]:
 
 
 def dirents_bytes(dirents: Sequence[tuple[str, int, int]]) -> bytes:
-    """Serialize ``(name, inode, kind)`` dirents, in the order given."""
+    """Serialize directory entries in the order supplied.
+
+    Args:
+        dirents: Sequence of (name, inode, kind) triples.
+
+    Returns:
+        The encoded entries with alignment and block-end padding.
+    """
     output = bytearray()
     extents = dirent_extents(name for name, _, _ in dirents)
     for (name, inode, kind), (at, size) in zip(dirents, extents):

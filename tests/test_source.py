@@ -1,3 +1,5 @@
+"""Exercise source inventory, path validation, and the JSON CLI."""
+
 import hashlib
 from contextlib import redirect_stdout
 import io
@@ -21,13 +23,21 @@ PARAM = {
 
 
 def make_source(root: Path) -> None:
+    """Create the minimum staged-title fixture under an existing root.
+
+    Args:
+        root: Temporary directory in which to create the executable and
+            metadata.
+    """
     (root / "sce_sys").mkdir()
     (root / "eboot.bin").write_bytes(b"ELF fixture")
     (root / "sce_sys" / "param.json").write_text(json.dumps(PARAM), encoding="utf-8")
 
 
 class SourceTests(unittest.TestCase):
+    """Build small staged folders to exercise inspection errors and reports."""
     def test_inspect_source_and_cli_json(self):
+        """Compare source inventory and JSON output for a Unicode path."""
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             make_source(root)
@@ -47,6 +57,7 @@ class SourceTests(unittest.TestCase):
             self.assertEqual(json.loads(output.getvalue())["manifest_sha256"], report.manifest_sha256)
 
     def test_missing_executable_and_invalid_metadata(self):
+        """Report a missing executable and malformed metadata separately."""
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             make_source(root)
@@ -59,6 +70,7 @@ class SourceTests(unittest.TestCase):
                 inspect_source(root)
 
     def test_reject_case_collision(self):
+        """Reject directory names that differ only by case when supported."""
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             make_source(root)
@@ -70,6 +82,7 @@ class SourceTests(unittest.TestCase):
                 inspect_source(root)
 
     def test_reject_link(self):
+        """Reject a link even when it points inside the staged title."""
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             make_source(root)
@@ -82,7 +95,9 @@ class SourceTests(unittest.TestCase):
 
 
 class HelloWorldSourceTests(unittest.TestCase):
+    """Compare inventory facts against the captured staged title."""
     def test_reference_source_manifest(self):
+        """Confirm the canonical manifest digest, file count, and title ID."""
         default = Path(__file__).resolve().parents[1] / ".artifacts" / "hello-world"
         root = Path(os.environ.get("PS5_PKGKIT_REFERENCE", default)) / "PPSA99771"
         if not root.is_dir():

@@ -1,3 +1,5 @@
+"""Check finalized-image header serialization and zero padding."""
+
 import unittest
 
 from ps5_pkgkit.format import fih
@@ -6,7 +8,9 @@ from ps5_pkgkit.format.crypto import sha3
 
 
 class FihTests(unittest.TestCase):
+    """Read fields from the serialized little-endian header."""
     def test_header_carries_the_template_fields(self):
+        """Check the magic, version, image offsets, counts, and digests."""
         naps = bytes([7]) * 104
         header = fih.write(fih.FihParams(
             outer_size=7 * BLOCK,
@@ -33,6 +37,7 @@ class FihTests(unittest.TestCase):
         self.assertEqual(int.from_bytes(header[0x20:0x28], "little"), 3 * BLOCK)
 
     def test_empty_regions_stay_zero(self):
+        """Check the reserved range following the first game digest."""
         header = fih.write(fih.FihParams(
             outer_size=BLOCK, superblock_block=0, game_digest=bytes(32),
             cnt_offset=2 * BLOCK, naps=b"", inner_size=BLOCK, meta_base=0,

@@ -1,4 +1,4 @@
-"""The finalized-image header block (``\\x7FFIH``), 0x10000 bytes, little-endian."""
+"""Serialize the 64 KiB little-endian finalized-image header."""
 
 from __future__ import annotations
 
@@ -11,6 +11,22 @@ from .crypto import sha3
 @dataclass(slots=True)
 class FihParams:
     #: The outer image's length in bytes (``0x18``).
+    """Image geometry and digests for the finalized-image header.
+
+    Attributes:
+        outer_size: Outer image length in bytes.
+        superblock_block: Block index of the superblock in the outer image.
+        game_digest: SHA3-256 digest of the plaintext superblock.
+        cnt_offset: Absolute byte offset of the content container.
+        naps: Serialized inner-image layout descriptor.
+        inner_size: Inner image or logical mount length in bytes.
+        meta_base: Metadata base offset in the logical mount, in bytes.
+        inner_blocks: Stored inner image length in blocks.
+        content_inodes: Count of directories below uroot plus all files.
+        content_version: Content version encoded as a 2-3-3 BCD word.
+        app_file_count: Number of application payload files.
+        flt_count: Number of nonempty flat-path tables.
+    """
     outer_size: int
     #: The outer superblock's block index; its absolute offset goes to ``0x20``.
     superblock_block: int
@@ -37,6 +53,15 @@ class FihParams:
 
 
 def write(params: FihParams) -> bytes:
+    """Serialize one little-endian finalized-image header block.
+
+    Args:
+        params: Image geometry, title version, and layout descriptor for the
+            header.
+
+    Returns:
+        The complete 64 KiB header, including its zero-filled regions.
+    """
     header = bytearray(BLOCK)
     header[0:4] = b"\x7fFIH"
     header[4] = 0x01

@@ -26,7 +26,14 @@ LARGE_PACKAGE_LV2_FILE_LIMIT = 500_000
 
 
 def excluded(path: str) -> str | None:
-    """Why ``path`` stays out of the package, or ``None`` when it belongs in it."""
+    """Identify generated or auxiliary paths to leave out of a package.
+
+    Args:
+        path: Slash-separated path relative to the source root.
+
+    Returns:
+        A short exclusion reason, or None if the path belongs in the package.
+    """
     lower = path.lower()
     parts = lower.split("/")
     if len(parts) > 1 and parts[0] in GENERATED_ROOT_DIRECTORIES:
@@ -44,12 +51,34 @@ def excluded(path: str) -> str | None:
 
 @dataclass(frozen=True, slots=True)
 class SizeClass:
+    """The package size class and usable add-on mount level.
+
+    Attributes:
+        attribute: Numeric size class recorded in attributePub.
+        mount_level: Add-on mount level after any reduction required by size
+            limits.
+        estimated: Estimated total bytes including packaging overhead.
+    """
     attribute: int
     mount_level: int
     estimated: int
 
 
 def choose_size_class(unpacked: int, files: int, mount_level: int) -> SizeClass:
+    """Select a package size class and compatible add-on mount level.
+
+    Args:
+        unpacked: Unpacked payload size in bytes.
+        files: Number of files to package.
+        mount_level: Requested add-on mount level, normally 0, 1, or 2.
+
+    Returns:
+        Selected size class, adjusted mount level, and size estimate.
+
+    Raises:
+        ValueError: The mount level exceeds 2 or the file count exceeds the
+            limit for the largest class.
+    """
     if mount_level > 2:
         raise ValueError(
             f"kernel.addcontMountLevel must be 0, 1 or 2, not {mount_level}"
@@ -74,6 +103,7 @@ def choose_size_class(unpacked: int, files: int, mount_level: int) -> SizeClass:
 
 
 def _number_value_span(text: str, key: str) -> tuple[int, int] | None:
+    """Find the signed decimal value after a quoted metadata key."""
     at = text.find(key)
     if at < 0:
         return None
@@ -91,6 +121,7 @@ def _number_value_span(text: str, key: str) -> tuple[int, int] | None:
 
 
 def _set_number(data: bytes, key: str, value: int) -> bytes | None:
+    """Replace an existing numeric value, or return None if absent."""
     text = data.decode("utf-8", "replace")
     span = _number_value_span(text, key)
     if span is None:
@@ -101,6 +132,21 @@ def _set_number(data: bytes, key: str, value: int) -> bytes | None:
 
 
 def size_class_rewrite(data: bytes, unpacked: int, files: int) -> tuple[bytes, str] | None:
+    """Update size-class metadata for a base application.
+
+    Args:
+        data: UTF-8 title metadata for a JSON object.
+        unpacked: Unpacked payload size in bytes.
+        files: Number of files to package.
+
+    Returns:
+        Updated bytes and a human-readable change summary, or None when the
+        input needs no size-class changes or is not a base application.
+
+    Raises:
+        ValueError: The size class is unsupported or a required field cannot be
+            rewritten.
+    """
     parsed = paramjson.parse(data)
     if parsed is None:
         return None

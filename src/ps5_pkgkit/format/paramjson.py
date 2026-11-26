@@ -15,6 +15,14 @@ STANDARD_DRM = "standard"
 
 
 def parse(data: bytes):
+    """Decode UTF-8 JSON, allowing a leading byte order mark.
+
+    Args:
+        data: JSON document bytes.
+
+    Returns:
+        The decoded value, or None if decoding or parsing fails.
+    """
     try:
         return json.loads(data.decode("utf-8-sig"))
     except (UnicodeError, ValueError, RecursionError):
@@ -22,6 +30,16 @@ def parse(data: bytes):
 
 
 def string_value_span(text: str, key: str) -> tuple[int, int] | None:
+    """Locate the contents of a quoted metadata field.
+
+    Args:
+        text: Decoded metadata text.
+        key: Field name including its double quotes.
+
+    Returns:
+        Character offsets from just after the opening quote to the closing
+        quote, or None if the field cannot be located.
+    """
     at = text.find(key)
     if at < 0:
         return None
@@ -41,6 +59,16 @@ def string_value_span(text: str, key: str) -> tuple[int, int] | None:
 
 
 def set_string_value(data: bytes, key: str, value: str) -> bytes | None:
+    """Replace the contents of a quoted metadata field.
+
+    Args:
+        data: UTF-8 metadata bytes.
+        key: Field name including its double quotes.
+        value: Replacement text with any required JSON escaping already applied.
+
+    Returns:
+        Updated bytes, or None if no value span can be located.
+    """
     text = data.decode("utf-8", "replace")
     span = string_value_span(text, key)
     if span is None:
@@ -51,6 +79,17 @@ def set_string_value(data: bytes, key: str, value: str) -> bytes | None:
 
 
 def insert_raw_field(data: bytes, name: str, raw: str) -> bytes | None:
+    """Insert a raw field before the existing members of a JSON object.
+
+    Args:
+        data: UTF-8 metadata bytes for a nonempty object.
+        name: Field name without surrounding quotes.
+        raw: Encoded JSON value to write verbatim.
+
+    Returns:
+        Updated metadata using the object's newline and indentation style, or
+        None if no opening brace is present.
+    """
     text = data.decode("utf-8", "replace")
     opening = text.find("{")
     if opening < 0:
@@ -75,6 +114,7 @@ def insert_raw_field(data: bytes, name: str, raw: str) -> bytes | None:
 
 
 def _take_while_whitespace(text: str) -> str:
+    """Return the leading whitespace from a string."""
     out = []
     for char in text:
         if not char.isspace():
@@ -84,10 +124,28 @@ def _take_while_whitespace(text: str) -> str:
 
 
 def insert_field(data: bytes, name: str, value: str) -> bytes | None:
+    """Insert a quoted string field into the metadata object.
+
+    Args:
+        data: UTF-8 metadata bytes for a nonempty object.
+        name: Field name without surrounding quotes.
+        value: String contents with any required JSON escaping already applied.
+
+    Returns:
+        Updated metadata, or None if no opening brace is present.
+    """
     return insert_raw_field(data, name, f'"{value}"')
 
 
 def drm_rewrite(data: bytes) -> bytes | None:
+    """Normalize the packaged metadata's DRM type to standard.
+
+    Args:
+        data: UTF-8 title metadata.
+
+    Returns:
+        Updated bytes, or None if the field is absent or already standard.
+    """
     text = data.decode("utf-8", "replace")
     span = string_value_span(text, '"applicationDrmType"')
     if span is None:
@@ -99,6 +157,14 @@ def drm_rewrite(data: bytes) -> bytes | None:
 
 
 def launch_rewrite(data: bytes) -> bytes | None:
+    """Clear launch-specific fields from the packaged metadata.
+
+    Args:
+        data: UTF-8 title metadata.
+
+    Returns:
+        Updated bytes, or None if no field could be changed.
+    """
     output = data
     changed = False
     text = output.decode("utf-8", "replace")
@@ -121,6 +187,16 @@ def launch_rewrite(data: bytes) -> bytes | None:
 
 
 def remove_string_field(data: bytes, key: str) -> bytes | None:
+    """Remove a quoted field and its adjacent separator.
+
+    Args:
+        data: UTF-8 metadata bytes.
+        key: Field name including its double quotes.
+
+    Returns:
+        Updated bytes, or None if the field and a usable comma cannot be
+        located.
+    """
     text = data.decode("utf-8", "replace")
     key_at = text.find(key)
     if key_at < 0:
@@ -150,6 +226,16 @@ def remove_string_field(data: bytes, key: str) -> bytes | None:
 
 
 def blank_string_array(data: bytes, key: str) -> bytes | None:
+    """Replace string contents in a metadata array with spaces.
+
+    Args:
+        data: UTF-8 metadata bytes.
+        key: Array field name including its double quotes.
+
+    Returns:
+        Updated bytes with the original array widths, or None if the array is
+        absent or already blank.
+    """
     text = data.decode("utf-8", "replace")
     at = text.find(key)
     if at < 0:
@@ -179,6 +265,15 @@ def blank_string_array(data: bytes, key: str) -> bytes | None:
 
 
 def title_id_from_content_id(content_id: str) -> str | None:
+    """Extract the title ID segment from a content ID.
+
+    Args:
+        content_id: Identifier with the title segment between a dash and an
+            underscore.
+
+    Returns:
+        The title segment, or None if it is empty or the separators are absent.
+    """
     if "-" not in content_id:
         return None
     rest = content_id.split("-", 1)[1]
@@ -188,6 +283,15 @@ def title_id_from_content_id(content_id: str) -> str | None:
 
 
 def content_id_rewrite(data: bytes, content_id: str) -> bytes | None:
+    """Set the content ID and matching title ID in packaged metadata.
+
+    Args:
+        data: UTF-8 metadata for a JSON object.
+        content_id: Content identifier to write.
+
+    Returns:
+        Updated bytes, or None if the input cannot be parsed or rewritten.
+    """
     parsed = parse(data)
     if parsed is None:
         return None
@@ -209,6 +313,15 @@ def content_id_rewrite(data: bytes, content_id: str) -> bytes | None:
 
 
 def firmware_word(version: str) -> str | None:
+    """Convert a firmware version to the package's hexadecimal word.
+
+    Args:
+        version: Dotted major and minor version, or an existing 16-digit hex
+            word.
+
+    Returns:
+        A 0x-prefixed word with uppercase digits, or None for invalid input.
+    """
     value = version.strip()
     if value[:2].lower() == "0x":
         hex_part = value[2:]
@@ -231,10 +344,28 @@ def firmware_word(version: str) -> str | None:
 
 
 def firmware_rewrite(data: bytes, version: str) -> bytes | None:
+    """Replace the required system software version.
+
+    Args:
+        data: UTF-8 title metadata.
+        version: Encoded firmware word, as returned by firmware_word.
+
+    Returns:
+        Updated bytes, or None if the target string cannot be located.
+    """
     return set_string_value(data, '"requiredSystemSoftwareVersion"', version)
 
 
 def content_version_word(data: bytes) -> int | None:
+    """Pack the eight content-version digits into a BCD integer.
+
+    Args:
+        data: UTF-8 metadata for a JSON object.
+
+    Returns:
+        The packed version, or None when the version is missing or does not
+        contain eight digits.
+    """
     parsed = parse(data)
     if parsed is None:
         return None

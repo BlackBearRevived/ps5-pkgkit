@@ -1,3 +1,5 @@
+"""Check crypto and checksum primitives against known vectors."""
+
 import unittest
 
 from ps5_pkgkit.format import crypto
@@ -5,7 +7,9 @@ from ps5_pkgkit.format.aes import Aes128, Xts, cbc_decrypt, cbc_encrypt
 
 
 class CryptoVectorTests(unittest.TestCase):
+    """Check raw hashes, CRC polynomials, and package-derived keys."""
     def test_key_derivation_matches_the_reference_package(self):
+        """Match the derived image, data, and tweak keys to the fixture."""
         ekpfs = crypto.derive_ekpfs(
             "EP7579-PPSA17599_00-EXP33DLC10000PS5", crypto.DEFAULT_PASSCODE
         )
@@ -19,11 +23,13 @@ class CryptoVectorTests(unittest.TestCase):
         self.assertEqual(data.hex(), "66cb5805c75c915a157f8ab9ccb80cab")
 
     def test_crc_check_values(self):
+        """Distinguish Castagnoli CRC from ZIP CRC with known inputs."""
         self.assertEqual(crypto.crc32c(b"123456789"), 0xE3069283)
         self.assertEqual(crypto.crc32(b"123456789"), 0xCBF43926)
         self.assertEqual(crypto.crc32(b"hello"), 0x3610A686)
 
     def test_hmac_and_sha3_use_the_standard_algorithms(self):
+        """Check SHA3 of empty input and HMAC of a short keyed message."""
         self.assertEqual(
             crypto.sha3(b"").hex(),
             "a7ffc6f8bf1ed76651c14756a061d662f580ff4de43b49fa82d80a4b80f8434a",
@@ -35,7 +41,9 @@ class CryptoVectorTests(unittest.TestCase):
 
 
 class AesTests(unittest.TestCase):
+    """Exercise single-block AES and the package's block modes."""
     def test_fips_197_block_vector(self):
+        """Encrypt the FIPS 197 sample block and recover its plaintext."""
         key = bytes.fromhex("000102030405060708090a0b0c0d0e0f")
         plain = bytes.fromhex("00112233445566778899aabbccddeeff")
         cipher = Aes128(key)
@@ -44,6 +52,7 @@ class AesTests(unittest.TestCase):
         self.assertEqual(cipher.decrypt_block(encrypted), plain)
 
     def test_cbc_round_trip(self):
+        """Recover the original plaintext from a multi-block CBC stream."""
         key = bytes(range(16))
         iv = bytes(range(16, 32))
         data = bytes(index * 7 % 256 for index in range(160))
@@ -52,6 +61,7 @@ class AesTests(unittest.TestCase):
         self.assertNotEqual(encrypted, data)
 
     def test_xts_matches_the_reference_vector(self):
+        """Check exact ciphertext and decoding for a two-block XTS unit."""
         xts = Xts(bytes(range(16)), bytes(range(16, 32)))
         encrypted = xts.encrypt(0, bytes(32))
         self.assertEqual(
@@ -61,6 +71,7 @@ class AesTests(unittest.TestCase):
         self.assertEqual(xts.decrypt(0, encrypted), bytes(32))
 
     def test_xts_signed_sector_flag_is_part_of_the_tweak(self):
+        """Compare reference ciphertext prefixes for both sector modes."""
         xts = Xts(bytes(range(16)), bytes(range(16, 32)))
         plain = bytes((index * 7) & 0xFF for index in range(0x10000))
         data = xts.encrypt(5, plain)

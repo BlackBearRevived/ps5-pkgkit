@@ -1,3 +1,5 @@
+"""Check structural rejection, integrity checks, and reference identity."""
+
 import hashlib
 import os
 from pathlib import Path
@@ -10,7 +12,9 @@ from ps5_pkgkit import VerificationError, verify_package
 
 
 class MalformedPackageTests(unittest.TestCase):
+    """Exercise bounds checks using short synthetic packages."""
     def test_truncated_header(self):
+        """Report a truncated finalized-image header after reading its magic."""
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "truncated.pkg"
             path.write_bytes(b"\x7fFIH")
@@ -18,6 +22,7 @@ class MalformedPackageTests(unittest.TestCase):
                 verify_package(path)
 
     def test_out_of_file_container_rejected_before_read(self):
+        """Reject a declared container offset beyond the end of the file."""
         header = bytearray(256)
         header[:4] = b"\x7fFIH"
         struct.pack_into("<H", header, 6, 3)
@@ -31,10 +36,16 @@ class MalformedPackageTests(unittest.TestCase):
 
 
 class HelloWorldReferenceTests(unittest.TestCase):
+    """Verification checks using the reference and corrupted copies.
+
+    Attributes:
+        reference: Path to the verified Hello World package fixture.
+    """
     expected_sha256 = "f4746fdf4c66f4e8f664ae5f50bd1ecdca2b741bc9e8647c7ca1070664abae09"
 
     @classmethod
     def setUpClass(cls):
+        """Resolve the verified reference package or skip the fixture tests."""
         default = Path(__file__).resolve().parents[1] / ".artifacts" / "hello-world"
         fixture = Path(os.environ.get("PS5_PKGKIT_REFERENCE", default))
         cls.reference = fixture / "PS5-PKG-Hello-World.pkg"
@@ -42,6 +53,7 @@ class HelloWorldReferenceTests(unittest.TestCase):
             raise unittest.SkipTest("set PS5_PKGKIT_REFERENCE to the verified Hello World fixture directory")
 
     def test_verify_title_and_digest(self):
+        """Match the trusted digest, title metadata, and entry count."""
         result = verify_package(self.reference, expected_sha256=self.expected_sha256)
         self.assertTrue(result.expected_sha256_verified)
         self.assertEqual(result.title_id, "PPSA99771")
@@ -49,6 +61,7 @@ class HelloWorldReferenceTests(unittest.TestCase):
         self.assertEqual(result.container_entries, 19)
 
     def test_reject_container_body_corruption(self):
+        """Detect a flipped byte in a copy of the content container."""
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "corrupt.pkg"
             shutil.copyfile(self.reference, path)
@@ -66,6 +79,7 @@ class HelloWorldReferenceTests(unittest.TestCase):
                 verify_package(path)
 
     def test_reject_wrong_expected_digest(self):
+        """Reject a well-formed SHA-256 belonging to different bytes."""
         other_sha256 = hashlib.sha256(b"other package").hexdigest()
         with self.assertRaisesRegex(VerificationError, "package SHA-256 mismatch"):
             verify_package(self.reference, expected_sha256=other_sha256)

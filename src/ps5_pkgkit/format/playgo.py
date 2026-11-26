@@ -1,8 +1,8 @@
-"""The PlayGo tables: ``playgo-chunk.dat``, ``playgo-hash-table.dat`` and ``playgo-ficm.dat``.
+"""Serialize the PlayGo chunk, file hash, and file-to-chunk tables.
 
-One chunk keeps the shape installing single-chunk packages carry: one mchunk
-spanning the whole image and empty labels. The hash table is a flat-path table
-of the image's files, and the file map repeats it with one chunk id per entry.
+A single-chunk package has one range spanning the image and empty labels. The
+file hash table indexes the mount's files and the file map associates each hash
+with one chunk ID.
 """
 
 from __future__ import annotations
@@ -18,6 +18,15 @@ MAX_CHUNKS = 255
 
 @dataclass(slots=True)
 class PlayGo:
+    """The serialized PlayGo tables and their chunk geometry.
+
+    Attributes:
+        chunk_dat: Serialized chunk and scenario descriptor.
+        hash_table: Serialized path hashes.
+        ficm: Serialized file-to-chunk map.
+        chunks: List of mchunk indices for each logical chunk.
+        mchunks: Pairs of byte offset and length for each stored range.
+    """
     chunk_dat: bytes
     hash_table: bytes
     ficm: bytes
@@ -25,23 +34,38 @@ class PlayGo:
     mchunks: list[tuple[int, int]]
 
     def chunk_size(self, index: int) -> int:
+        """Sum the byte lengths of the ranges owned by a chunk."""
         return sum(self.mchunks[m][1] for m in self.chunks[index])
 
 
 def _put16(data: bytearray, at: int, value: int) -> None:
+    """Store an unsigned 16-bit little-endian value in place."""
     data[at:at + 2] = value.to_bytes(2, "little")
 
 
 def _put32(data: bytearray, at: int, value: int) -> None:
+    """Store an unsigned 32-bit little-endian value in place."""
     data[at:at + 4] = value.to_bytes(4, "little")
 
 
 def _put64(data: bytearray, at: int, value: int) -> None:
+    """Store an unsigned 64-bit little-endian value in place."""
     data[at:at + 8] = value.to_bytes(8, "little")
 
 
 def chunk_dat(content_id: str, chunks: list[list[int]],
               mchunks: list[tuple[int, int]], labels: bool) -> bytes:
+    """Serialize the PlayGo chunk descriptor and its default scenario.
+
+    Args:
+        content_id: ASCII package content identifier.
+        chunks: List of mchunk indices for each logical chunk.
+        mchunks: Pairs of byte offset and length for each stored range.
+        labels: Whether to write numbered chunk and scenario labels.
+
+    Returns:
+        Serialized playgo-chunk.dat bytes.
+    """
     count = len(chunks)
     chunk_labels = bytearray()
     label_at = []
@@ -117,6 +141,14 @@ def chunk_dat(content_id: str, chunks: list[list[int]],
 
 
 def hash_table(entries: list[tuple[int, int]]) -> bytes:
+    """Serialize path hashes in the supplied order.
+
+    Args:
+        entries: Pairs of path hash and chunk index in file table order.
+
+    Returns:
+        Serialized playgo-hash-table.dat bytes.
+    """
     data = bytearray(0x38 + len(entries) * 8)
     _put32(data, 0x00, 1)
     _put32(data, 0x04, 0x08000000)
@@ -131,6 +163,14 @@ def hash_table(entries: list[tuple[int, int]]) -> bytes:
 
 
 def ficm(entries: list[tuple[int, int]]) -> bytes:
+    """Serialize the chunk index for each file hash in input order.
+
+    Args:
+        entries: Pairs of path hash and chunk index in file table order.
+
+    Returns:
+        Serialized playgo-ficm.dat bytes.
+    """
     data = bytearray(0x10 + len(entries) * 2)
     _put32(data, 0x00, 1)
     _put32(data, 0x08, 0x10)
@@ -142,6 +182,22 @@ def ficm(entries: list[tuple[int, int]]) -> bytes:
 
 def build(content_id: str, files: list[tuple[str, int, int]], cnt_offset: int,
           chunk_count: int = DEFAULT_CHUNKS) -> PlayGo:
+    """Build PlayGo tables for the files in a mount image.
+
+    Args:
+        content_id: 36-character ASCII package content identifier.
+        files: Triples of path, byte offset in the mount, and file size.
+        cnt_offset: Absolute byte offset of the content container.
+        chunk_count: Requested chunk count, reduced if there are fewer image
+            blocks.
+
+    Returns:
+        The three serialized tables and the chunk geometry used to generate
+        them.
+
+    Raises:
+        ValueError: The content ID length or requested chunk count is invalid.
+    """
     if len(content_id) != 36:
         raise ValueError("content id must be 36 characters")
     if chunk_count < 1 or chunk_count > MAX_CHUNKS:

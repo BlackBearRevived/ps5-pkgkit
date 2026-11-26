@@ -21,14 +21,23 @@ MAX_TRAILER = 64 * 1024 * 1024
 
 @dataclass(frozen=True, slots=True)
 class SelfRepair:
+    """The normalization planned for a staged executable.
+
+    Attributes:
+        rewrite_magic: Whether to replace the legacy executable magic.
+        insert_at: Byte offset in the original file at which to insert padding.
+        padding: Number of zero bytes to insert.
+    """
     rewrite_magic: bool
     insert_at: int
     padding: int
 
     def new_size(self, original_size: int) -> int:
+        """Return the file size after inserting the planned padding."""
         return original_size + self.padding
 
     def describe(self) -> str:
+        """Summarize the changes for a build warning."""
         parts = []
         if self.rewrite_magic:
             parts.append("older signature rewritten to the PS5 one")
@@ -40,6 +49,15 @@ class SelfRepair:
 
 
 def is_version_records(records: bytes) -> bool:
+    """Check whether a trailer contains complete version records.
+
+    Args:
+        records: Candidate trailer bytes starting at a record boundary.
+
+    Returns:
+        True if the bytes contain at least one record and the entire trailer
+        parses as version records.
+    """
     at = 0
     count = 0
     while at < len(records):
@@ -64,7 +82,16 @@ def is_version_records(records: bytes) -> bool:
 
 def plan(header: bytes, size: int,
          read: Callable[[int, int], bytes]) -> SelfRepair | None:
-    """The repair the header and trailer call for, or ``None`` when none is needed."""
+    """Determine whether a staged executable needs normalization.
+
+    Args:
+        header: Leading bytes of the executable, normally at least 32 bytes.
+        size: Original file size in bytes.
+        read: Callable that reads a byte range given its offset and length.
+
+    Returns:
+        A planned header or trailer repair, or None if no repair is needed.
+    """
     if len(header) < 0x20 or size < 0x20:
         return None
     magic = header[:4]
@@ -95,7 +122,17 @@ def plan(header: bytes, size: int,
 
 
 def read_repaired(original: bytes, repair: SelfRepair) -> bytes:
-    """The whole repaired file, for tests and small inputs."""
+    """Apply a planned repair to an in-memory executable.
+
+    This helper is used for tests and inputs small enough to hold in memory.
+
+    Args:
+        original: Complete bytes of the original executable.
+        repair: Repair planned for those same bytes.
+
+    Returns:
+        The complete normalized executable.
+    """
     size = len(original)
     output = bytearray()
     position = 0

@@ -1,3 +1,5 @@
+"""Check install-metadata records against a fixture and an assembled image."""
+
 import io
 import os
 from pathlib import Path
@@ -13,7 +15,9 @@ PACKAGE = FIXTURE / "PS5-PKG-Hello-World.pkg"
 
 @unittest.skipUnless(PACKAGE.is_file(), "reference package is not available")
 class ReferenceMetaTests(unittest.TestCase):
+    """Read the metric record stream from the reference package."""
     def test_tlv_stream_decrypts_and_parses(self):
+        """Check the record order and payload header after decryption."""
         data = PACKAGE.read_bytes()
         cnt_at = 0x80000
         si_at = cnt_at + int.from_bytes(data[cnt_at + 0x7C:cnt_at + 0x80], "big")
@@ -37,7 +41,9 @@ class ReferenceMetaTests(unittest.TestCase):
 
 
 class MetaBuildTests(unittest.TestCase):
+    """Build and parse metrics for a known stored-image layout."""
     def test_built_stream_round_trips(self):
+        """Check AES alignment, block count, and digest-table length."""
         files = [
             ("sce_sys/keystone", 0, 96),
             ("sce_sys/param.json", 96, 895),

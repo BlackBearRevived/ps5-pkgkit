@@ -1,7 +1,7 @@
-"""The debug license entries a package carries: ``license.dat`` and ``license.info``.
+"""Serialize debug license metadata for a PS5 homebrew package.
 
-Both are pure functions of the content id. The RIF encrypts a key block with
-the debug RIF key and signs its first 768 bytes with the debug RIF RSA key.
+Both records are deterministic for the same title metadata. The license data
+carries an encrypted key block and a signature.
 """
 
 from __future__ import annotations
@@ -23,6 +23,14 @@ SHA256_DIGEST_INFO = bytes([
 
 
 def _sign_sha256(digest: bytes) -> bytes:
+    """Sign a SHA-256 digest for the debug license record.
+
+    Args:
+        digest: Raw 32-byte SHA-256 digest.
+
+    Returns:
+        A 256-byte signature encoded in big-endian order.
+    """
     encoded = bytearray(b"\xff" * 256)
     encoded[0] = 0x00
     encoded[1] = 0x01
@@ -38,6 +46,16 @@ def _sign_sha256(digest: bytes) -> bytes:
 
 def license_dat(content_id: str, drm_type: int = PS5_DRM,
                 content_type: int = APPLICATION) -> bytes:
+    """Build the debug license.dat record for a title.
+
+    Args:
+        content_id: ASCII package content identifier.
+        drm_type: Numeric DRM type to record.
+        content_type: Numeric content type to record.
+
+    Returns:
+        Serialized 1,024-byte license record.
+    """
     content = content_id.encode("ascii")
     data = bytearray(LICENSE_DAT_LEN)
     data[0:4] = b"RIF\0"
@@ -64,6 +82,15 @@ def license_dat(content_id: str, drm_type: int = PS5_DRM,
 
 
 def license_info(content_id: str, content_type: int = APPLICATION) -> bytes:
+    """Build the debug license.info record for a title.
+
+    Args:
+        content_id: ASCII package content identifier.
+        content_type: Numeric content type to record.
+
+    Returns:
+        Serialized 512-byte license information record.
+    """
     content = content_id.encode("ascii")
     data = bytearray(LICENSE_INFO_LEN)
     data[:len(content)] = content

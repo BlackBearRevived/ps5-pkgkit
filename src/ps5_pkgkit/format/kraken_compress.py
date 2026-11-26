@@ -14,6 +14,17 @@ BLOCK = 0x10000
 
 @dataclass(slots=True)
 class StoredBlock:
+    """The location and encoding of a stored Kraken block.
+
+    Attributes:
+        logical: Byte offset in the logical mount.
+        length: Length of the uncompressed block in bytes.
+        stored_at: Byte offset in the stored image.
+        halves: Stored length and LZ flag for each half in order.
+        delta: Delta-literal flags for the even and odd halves.
+        owner_kind: Which region owns the block: file, gap, or meta.
+        owner: Application file ID for a file block, otherwise None.
+    """
     logical: int
     length: int
     stored_at: int
@@ -24,11 +35,25 @@ class StoredBlock:
 
     @property
     def stored_len(self) -> int:
+        """The total stored byte length of both halves."""
         return sum(size for size, _ in self.halves)
 
 
 @dataclass(slots=True)
 class KrakenImage:
+    """A compressed image and the metadata needed to describe it.
+
+    Attributes:
+        image: Stored image bytes padded to whole filesystem blocks.
+        blocks: Block descriptions in logical mount order.
+        image_len: Padded stored length in bytes.
+        file_digests: Raw SHA3-256 digests in AFID order.
+        file_stored_at: Stored byte offset of each file's first block, in AFID
+            order.
+        mount_size: Logical mount length in bytes.
+        data_end: Logical end of the file payloads in bytes.
+        meta_base: Logical byte offset of the metadata region.
+    """
     image: bytes
     blocks: list[StoredBlock]
     image_len: int
@@ -40,10 +65,21 @@ class KrakenImage:
 
     @property
     def disk_blocks(self) -> int:
+        """The number of filesystem blocks in the padded stored image."""
         return self.image_len // BLOCK
 
 
 def plan_blocks(plan) -> tuple[list[dict], int]:
+    """Split the planned mount into file, padding, and metadata blocks.
+
+    Args:
+        plan (Plan): Inner-image plan with logical file positions and mount
+            geometry.
+
+    Returns:
+        Block dictionaries in logical order and the byte offset at which the
+        file payloads end.
+    """
     todo: list[dict] = []
     end = 0
     for afid, index in enumerate(plan.afid_order):
@@ -81,6 +117,24 @@ def plan_blocks(plan) -> tuple[list[dict], int]:
 
 
 def compress(plan, metadata: bytes, keystone: bytes, read, level: str = "balanced") -> KrakenImage:
+    """Encode and round-trip-check each planned Kraken block.
+
+    Args:
+        plan (Plan): Inner-image plan for the compressed layout.
+        metadata: Serialized inner-image metadata filling the mount above its
+            base.
+        keystone: Payload for the generated keystone, if the plan requests one.
+        read (Callable): Range reader taking a file path, byte offset, and byte
+            count.
+        level: Kraken compression preset.
+
+    Returns:
+        Padded stored image, block descriptions, and file offsets and digests.
+
+    Raises:
+        ValueError: Metadata length is inconsistent, a file read is short, or an
+            encoded block fails to round-trip.
+    """
     todo, data_end = plan_blocks(plan)
     mount = plan.ndblock * BLOCK
     if len(metadata) != mount - plan.meta_base:
@@ -152,6 +206,7 @@ def compress(plan, metadata: bytes, keystone: bytes, read, level: str = "balance
 
 
 def _block_record(block: StoredBlock) -> int:
+    """Pack a stored block's lengths and modes into a layout record."""
     value = ((block.logical % WINDOW) >> 4) & 0x3FFF
     value |= (block.halves[0][0] - 1) << 14
     value |= 1 << 31
@@ -173,11 +228,24 @@ def _block_record(block: StoredBlock) -> int:
 
 
 def _anchor_record(position: int) -> int:
+    """Pack the stored byte position of a new run into a layout anchor."""
     return ((position >> 20) & ((1 << 26) - 1)) | ((position // WINDOW) << 26) \
         | ((position % WINDOW) << 48)
 
 
 def layout(image: KrakenImage, file_starts: list[int]) -> bytes:
+    """Serialize the NAPS layout for a Kraken-compressed inner image.
+
+    Args:
+        image: Stored image and its logical block descriptions.
+        file_starts: Logical byte offsets of files in AFID order.
+
+    Returns:
+        The serialized descriptor containing file indexes and block records.
+
+    Raises:
+        ValueError: A logical unit contains too many blocks for the index.
+    """
     run_end = 1 << 66
     terminator = 2 << 66
     records: list[int] = [0]
@@ -243,6 +311,7 @@ def layout(image: KrakenImage, file_starts: list[int]) -> bytes:
         blob += offset.to_bytes(5, "little") + bytes([kind])
     for group in range(groups):
         def at(slot: int) -> int:
+            """Return the block index or the end-of-image sentinel."""
             index = group * 8 + slot
             return first[index] if index < len(first) else sentinel
         base = at(0)

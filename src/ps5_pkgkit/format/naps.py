@@ -27,6 +27,15 @@ COMP_KRAKEN = 2
 
 @dataclass(slots=True)
 class RunBase:
+    """The base offset and key slot for a run of blocks.
+
+    Attributes:
+        coffset_end_mod_256k: End of the previous stored run within its 256 KiB
+            unit.
+        tweak: Tweak index stored for this run.
+        key_slot: Key slot recorded for the run.
+        coffset_start_256k: Stored start of the run in 256 KiB units.
+    """
     coffset_end_mod_256k: int
     tweak: int
     key_slot: int
@@ -35,6 +44,18 @@ class RunBase:
 
 @dataclass(slots=True)
 class Block:
+    """A data block or end marker in the NAPS layout.
+
+    Attributes:
+        coffset_start_mod_256k: Stored start within the current 256 KiB unit.
+        reserved19: Bit used by the writer to mark the terminator.
+        uoffset_start: Logical start within the current 256 KiB unit.
+        clen_even_minus1: Stored even-half length minus one.
+        even: Mode of the even half.
+        odd: Mode of the odd half.
+        kde: Encoded block kind.
+        shuffle: Shuffle pattern selector.
+    """
     coffset_start_mod_256k: int
     reserved19: bool
     uoffset_start: int
@@ -50,6 +71,21 @@ Cblock = RunBase | Block
 
 @dataclass(slots=True)
 class Layout:
+    """The decoded NAPS header, lookup tables, and block records.
+
+    Attributes:
+        num_files: File count encoded in the header.
+        compression_type: Numeric compression method.
+        num_keys: Encoded key-slot count.
+        num_shuffle: Number of shuffle patterns.
+        num_ublocks: Count of 256 KiB logical units.
+        num_outer_blocks: Count of stored outer blocks.
+        outer_digests: One digest field for each outer block.
+        shuffle_patterns: Raw shuffle pattern records.
+        fidx: File offsets and their record types.
+        u2c: Logical-to-stored block map records.
+        cblocks: Run bases and data block records in descriptor order.
+    """
     num_files: int
     compression_type: int
     num_keys: int
@@ -64,17 +100,28 @@ class Layout:
 
     @property
     def mount_size(self) -> int:
+        """The mount length in bytes, or zero without file-index records."""
         return self.fidx[-1][0] if self.fidx else 0
 
     @staticmethod
     def u2c_count(num_ublocks: int) -> int:
+        """Return the number of u2c records for the logical unit count."""
         return (num_ublocks + 7) // 8 + 1
 
 
 def decode_cblock(raw: bytes) -> Cblock:
+    """Decode the fields of a nine-byte block record.
+
+    Args:
+        raw: Bytes starting with the little-endian block record.
+
+    Returns:
+        A run base or data block, depending on the record tag.
+    """
     value = int.from_bytes(raw[:CBLOCK_LEN], "little")
 
     def field(low: int, high: int) -> int:
+        """Extract an inclusive range of bits from the record word."""
         return (value >> low) & ((1 << (high - low + 1)) - 1)
 
     coffset = field(0, 17)
@@ -93,6 +140,14 @@ def decode_cblock(raw: bytes) -> Cblock:
 
 
 def encode_cblock(record: Cblock) -> bytes:
+    """Serialize a block record in the NAPS on-disk format.
+
+    Args:
+        record: Run base or data block to encode.
+
+    Returns:
+        The nine-byte little-endian block record.
+    """
     value = 0
     if isinstance(record, Block):
         value |= record.coffset_start_mod_256k & 0x3FFFF
@@ -113,6 +168,18 @@ def encode_cblock(record: Cblock) -> bytes:
 
 
 def parse(blob: bytes) -> Layout:
+    """Read the NAPS layout descriptor into its constituent tables.
+
+    Args:
+        blob: Complete serialized layout descriptor.
+
+    Returns:
+        Header values, digest and index sections, and decoded block records.
+
+    Raises:
+        ValueError: The header is short or the sections do not fit the
+            descriptor.
+    """
     if len(blob) < 16:
         raise ValueError("naps layout is shorter than its header")
     word0 = int.from_bytes(blob[0:8], "little")
@@ -157,6 +224,20 @@ def parse(blob: bytes) -> Layout:
 
 @dataclass(slots=True)
 class _Plan:
+    """A block's positions and modes before packing NAPS records.
+
+    Attributes:
+        start_run: Whether to start a new run before this block.
+        on_disk: Starting byte offset in the stored image.
+        logical: Starting byte offset in the logical mount.
+        even_chunk_len: Byte length of the even half.
+        stream_len: Stored byte length of the complete block.
+        even: Mode of the even half.
+        odd: Mode of the odd half.
+        kde: Encoded block kind.
+        shuffle: Shuffle pattern selector.
+        terminator: Whether this block marks the end of the mount.
+    """
     start_run: bool
     on_disk: int
     logical: int
@@ -170,11 +251,13 @@ class _Plan:
 
 
 def _stored(start_run: bool, on_disk: int, logical: int, stream_len: int) -> _Plan:
+    """Create a plan for a stored data block with up to two halves."""
     return _Plan(start_run, on_disk, logical, min(stream_len, 0x20000),
                  stream_len, 1, int(stream_len > 0x20000), KDE_PAYLOAD, 0)
 
 
 def _needs_run(plans: list[_Plan], at: int, counter: int) -> bool:
+    """Check whether to insert a run base before a record boundary."""
     index = at
     while index < len(plans):
         if counter % 16 == 0:
@@ -187,6 +270,15 @@ def _needs_run(plans: list[_Plan], at: int, counter: int) -> bool:
 
 
 def _walk(plans: list[_Plan]) -> tuple[list[Cblock], list[tuple[int, int]]]:
+    """Convert planned blocks to NAPS records and index positions.
+
+    Args:
+        plans: Planned blocks in stored stream order.
+
+    Returns:
+        Block records and pairs of record index and logical offset for data
+        records.
+    """
     entries: list[Cblock] = []
     by_std: list[tuple[int, int]] = []
     cursor = 0
@@ -220,9 +312,22 @@ def _walk(plans: list[_Plan]) -> tuple[list[Cblock], list[tuple[int, int]]]:
 
 def build(image_len: int, ndblock: int, files: list[tuple[int, int, int]],
           data_end: int, meta_base: int) -> bytes:
-    """Build a layout for a stored inner image.
+    """Build the NAPS descriptor for an uncompressed inner image.
 
-    ``files`` is ``(logical, on_disk, size)`` in afid order.
+    Args:
+        image_len: Stored inner-image length in bytes.
+        ndblock: Logical mount length in filesystem blocks.
+        files: Triples of logical offset, stored offset, and size in AFID order.
+        data_end: Logical byte offset at the end of the file data.
+        meta_base: Logical byte offset of the metadata region, aligned to 256
+            KiB.
+
+    Returns:
+        Serialized layout descriptor.
+
+    Raises:
+        ValueError: The image or mount is empty or the metadata base is
+            unaligned.
     """
     if image_len == 0 or ndblock == 0 or meta_base % UBLOCK:
         raise ValueError("naps needs a non-empty image with 256 KiB-aligned metadata")

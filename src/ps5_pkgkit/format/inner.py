@@ -26,7 +26,14 @@ BLOCK_INFO_BASE = 0x0027_373C
 
 
 def keystone(passcode: str) -> bytes:
-    """The 96-byte ``sce_sys/keystone`` for a passcode."""
+    """Build the 96-byte sce_sys/keystone file for a passcode.
+
+    Args:
+        passcode: Passcode to encode as UTF-8.
+
+    Returns:
+        The complete keystone record.
+    """
     output = bytearray(96)
     output[0:8] = b"keystone"
     output[8:10] = (3).to_bytes(2, "little")
@@ -37,7 +44,15 @@ def keystone(passcode: str) -> bytes:
 
 
 def block_info_table(plan: Plan) -> bytes:
-    """The 0x100-byte block-info table between the data and the metadata."""
+    """Serialize the block-info table that follows the file data.
+
+    Args:
+        plan: Inner-image plan whose application file sizes determine the final
+            row.
+
+    Returns:
+        The 256-byte block-info table.
+    """
     uroot_sum = sum(item.size for item in plan.files if not item.sce_sys)
     subtracted = (4 * uroot_sum) & 0xF_FFFF
     big_endian = (BLOCK_INFO_BASE - subtracted) & 0xFF_FFFF
@@ -51,15 +66,29 @@ def block_info_table(plan: Plan) -> bytes:
 
 
 def inode_offset(index: int) -> int:
+    """Return the byte offset of an inode within the inode table."""
     return (index // c.INODES_PER_BLOCK) * c.BLOCK + (index % c.INODES_PER_BLOCK) * c.INODE_LEN
 
 
 def _dir_size(entry_bytes: int) -> int:
+    """Round a dirent stream length up to at least one full block."""
     return max(c.align_up(entry_bytes, c.BLOCK), c.BLOCK)
 
 
 @dataclass(slots=True)
 class _Inode:
+    """Fields used to serialize one inner-image inode.
+
+    Attributes:
+        mode: Inode type and permission bits.
+        nlink: Link count.
+        flags: Inode flags for data, tables, or modules.
+        size: Logical length of the node's data in bytes.
+        logical_offset: Byte offset of the data in the logical mount.
+        db1: Application file ID for a file, or -1 when unused.
+        db2: Parent inode when applicable, otherwise -1.
+        db3: Byte offset of the parent directory entry when applicable.
+    """
     mode: int
     nlink: int
     flags: int
@@ -72,9 +101,18 @@ class _Inode:
 
 def _write_inode(table: bytearray, index: int, record: _Inode,
                  build_time: tuple[int, int]) -> None:
+    """Write one record into an existing inode table.
+
+    Args:
+        table: Inode table buffer to modify in place.
+        index: Zero-based inode index.
+        record: Inode fields to serialize.
+        build_time: Timestamp as (seconds, nanoseconds).
+    """
     at = inode_offset(index)
 
     def put(offset: int, data: bytes) -> None:
+        """Write bytes at an offset relative to the current inode."""
         table[at + offset:at + offset + len(data)] = data
 
     put(0x00, record.mode.to_bytes(2, "little"))
@@ -93,6 +131,15 @@ def _write_inode(table: bytearray, index: int, record: _Inode,
 
 
 def _metadata_region(plan: Plan, build_time: tuple[int, int]) -> bytes:
+    """Serialize the inner-image metadata at its planned offsets.
+
+    Args:
+        plan: Layout containing the superblock geometry, inodes, and tables.
+        build_time: Timestamp as (seconds, nanoseconds).
+
+    Returns:
+        The metadata region, beginning at the planned metadata base.
+    """
     inode_count = 4 + len(plan.dirs) + len(plan.files)
     region = bytearray(plan.metadata.blocks * c.BLOCK)
 
@@ -173,6 +220,7 @@ def _metadata_region(plan: Plan, build_time: tuple[int, int]) -> bytes:
     region[table_start:table_start + table_bytes] = table
 
     def place(span: tuple[int, int], data: bytes) -> None:
+        """Copy bytes into the metadata buffer at a planned mount offset."""
         at = span[0] - plan.meta_base
         region[at:at + len(data)] = data
 
@@ -187,6 +235,13 @@ def _metadata_region(plan: Plan, build_time: tuple[int, int]) -> bytes:
 
 @dataclass(slots=True)
 class Placement:
+    """The stored and logical positions of a file payload.
+
+    Attributes:
+        on_disk_offset: Byte offset in the stored inner image.
+        size: Payload length in bytes.
+        logical_offset: Byte offset in the logical mount image.
+    """
     on_disk_offset: int
     size: int
     logical_offset: int
@@ -194,6 +249,19 @@ class Placement:
 
 @dataclass(slots=True)
 class InnerImage:
+    """An assembled inner image and its layout metadata.
+
+    Attributes:
+        image: Complete stored image bytes.
+        meta_base: Logical byte offset of the metadata region.
+        ndblock: Planned mount size in blocks.
+        block_info_offset: Stored byte offset of the block-info table.
+        placements: File locations in plan file order.
+        afid_files: Triples of logical offset, stored offset, and size in AFID
+            order.
+        metadata: Serialized metadata region.
+        blocks: Pairs of logical byte offset and length for metadata blocks.
+    """
     image: bytes
     meta_base: int
     ndblock: int
@@ -205,18 +273,40 @@ class InnerImage:
 
     @property
     def disk_blocks(self) -> int:
+        """The number of blocks needed to hold the stored image."""
         return (len(self.image) + c.BLOCK - 1) // c.BLOCK
 
 
 def metadata_region(plan: Plan, build_time: tuple[int, int] = (0, 0)) -> bytes:
-    """The metadata region's bytes for this plan."""
+    """Serialize the metadata region for an inner-image plan.
+
+    Args:
+        plan: Inner-image layout to serialize.
+        build_time: Timestamp as (seconds, nanoseconds), defaulting to zero.
+
+    Returns:
+        Bytes starting at the metadata base, without the preceding file data.
+    """
     return _metadata_region(plan, build_time)
 
 
 def write_stored(plan: Plan, passcode: str,
                  read: Callable[[str], bytes],
                  build_time: tuple[int, int] = (0, 0)) -> InnerImage:
-    """Assemble the inner image with the metadata region stored verbatim."""
+    """Assemble a stored inner image from its plan and file payloads.
+
+    Args:
+        plan: Planned file placements and metadata geometry.
+        passcode: Passcode for generating a missing keystone.
+        read: Callable that returns all bytes for a source-relative file path.
+        build_time: Timestamp as (seconds, nanoseconds), defaulting to zero.
+
+    Returns:
+        Stored image bytes and their on-disk and logical layout.
+
+    Raises:
+        ValueError: A payload length or region does not fit the plan.
+    """
     payloads: list[bytes] = []
     for item in plan.files:
         data = keystone(passcode) if item.generated and item.path == c.KEYSTONE else read(item.path)

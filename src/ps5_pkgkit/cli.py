@@ -13,6 +13,18 @@ from .verification import VerificationError, verify_package
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run a build, source inspection, or package verification command.
+
+    Args:
+        argv: Arguments without the program name, or None to read sys.argv.
+
+    Returns:
+        Zero on success or one on a handled build, inspection, or verification
+        error.
+
+    Raises:
+        SystemExit: Argparse handles help, version requests, and usage errors.
+    """
     parser = argparse.ArgumentParser(
         prog="ps5-pkgkit",
         description="Build PS5 packages from staged title folders, inspect folders and "

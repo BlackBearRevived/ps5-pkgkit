@@ -23,6 +23,13 @@ class SourceError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class SourceFile:
+    """One regular file in a staged title.
+
+    Attributes:
+        path: Slash-separated path relative to the title root.
+        size: File length in bytes.
+        sha256: Hexadecimal SHA-256 digest of the file contents.
+    """
     path: str
     size: int
     sha256: str
@@ -30,6 +37,17 @@ class SourceFile:
 
 @dataclass(frozen=True, slots=True)
 class SourceInspection:
+    """The identity and sorted file inventory of a staged title.
+
+    Attributes:
+        title_id: Title identifier from the metadata.
+        content_id: Content identifier from the metadata.
+        content_version: Content version from the metadata.
+        files: Inspected files in path order.
+        total_size: Combined size of the inspected files in bytes.
+        manifest_sha256: Hexadecimal SHA-256 digest of the canonical file
+            manifest.
+    """
     title_id: str
     content_id: str
     content_version: str
@@ -39,6 +57,16 @@ class SourceInspection:
 
 
 def _portable_name(name: str, relative: str) -> None:
+    """Check that a source path component uses supported characters.
+
+    Args:
+        name: Single directory entry name.
+        relative: Source-relative path to include in error messages.
+
+    Raises:
+        SourceError: The name is empty, reserved, or contains unsupported
+            characters or ending punctuation.
+    """
     if (name in {"", ".", ".."} or name[-1] in {" ", "."}
             or any(char in name for char in '\\/:*?"<>|')
             or any(ord(char) < 32 for char in name)):
@@ -46,6 +74,19 @@ def _portable_name(name: str, relative: str) -> None:
 
 
 def _hash_file(path: Path, scanned: os.stat_result, relative: str) -> SourceFile:
+    """Hash a regular file and check that it still matches the scan.
+
+    Args:
+        path: Filesystem path to open.
+        scanned: File metadata from the directory walk.
+        relative: Source-relative path for the returned record and any error.
+
+    Returns:
+        File size and hexadecimal SHA-256 recorded under the relative path.
+
+    Raises:
+        SourceError: The file changes, is no longer regular, or cannot be read.
+    """
     flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
     try:
         descriptor = os.open(path, flags)
@@ -71,6 +112,19 @@ def _hash_file(path: Path, scanned: os.stat_result, relative: str) -> SourceFile
 
 
 def _validate_metadata(root: Path, files: dict[str, SourceFile]) -> tuple[str, str, str]:
+    """Validate the required files and base application identity.
+
+    Args:
+        root: Staged title root.
+        files: Inspected files keyed by source-relative path.
+
+    Returns:
+        The title ID, content ID, and content version in that order.
+
+    Raises:
+        SourceError: Required files are missing or title metadata is invalid,
+            unsupported, or changed during inspection.
+    """
     if "eboot.bin" not in files:
         raise SourceError("missing root eboot.bin")
     metadata = files.get("sce_sys/param.json")
@@ -102,7 +156,23 @@ def _validate_metadata(root: Path, files: dict[str, SourceFile]) -> tuple[str, s
 
 
 def inspect_source(source_dir: str | Path) -> SourceInspection:
-    """Validate a staged base-app folder and return a stable SHA-256 inventory."""
+    """Validate a staged base application and hash its files.
+
+    The manifest hashes sorted lines in the form sha256, two spaces, and the
+    path prefixed with ./, each followed by a newline.
+
+    Args:
+        source_dir: Staged title directory containing eboot.bin and
+            sce_sys/param.json.
+
+    Returns:
+        Title identity, path-sorted file inventory, total size, and manifest
+        digest.
+
+    Raises:
+        SourceError: The directory cannot be inspected, contains unsupported or
+            colliding paths, changes during the scan, or has invalid metadata.
+    """
     root = Path(source_dir)
     try:
         root_stat = root.lstat()

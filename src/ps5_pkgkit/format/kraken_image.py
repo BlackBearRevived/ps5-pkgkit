@@ -1,4 +1,4 @@
-"""Walk a Kraken layout descriptor the way the console does, and decode its blocks."""
+"""Interpret a Kraken layout descriptor and decode its image blocks."""
 
 from __future__ import annotations
 
@@ -20,6 +20,19 @@ SHUFFLES = (
 
 @dataclass(slots=True)
 class DescribedBlock:
+    """The stored span and encoding of one logical Kraken block.
+
+    Attributes:
+        logical: Logical byte offset of the block in the mount.
+        length: Decoded block length in bytes.
+        stored_at: Starting byte offset in the stored image.
+        even_len: Stored length of the first half.
+        stored_len: Combined stored length of the halves.
+        even_lz: Whether the first half uses LZ commands.
+        odd_lz: Whether the second half uses LZ commands.
+        mode_bits: Packed flags that include the literal mode for each half.
+        shuffle: Index of the shuffle pattern to undo after decoding.
+    """
     logical: int
     length: int
     stored_at: int
@@ -32,10 +45,23 @@ class DescribedBlock:
 
 
 def _word(blob: bytes, at: int) -> int:
+    """Read a little-endian 64-bit word at the requested byte offset."""
     return int.from_bytes(blob[at:at + 8], "little")
 
 
 def describe(blob: bytes) -> list[DescribedBlock]:
+    """Interpret a Kraken layout as a sequence of logical block spans.
+
+    Args:
+        blob: Complete serialized Kraken layout descriptor.
+
+    Returns:
+        Block descriptions in logical mount order.
+
+    Raises:
+        ValueError: The descriptor is truncated or has unsupported or
+            inconsistent records.
+    """
     if len(blob) < 16:
         raise ValueError("descriptor too short")
     w0, w1 = _word(blob, 0), _word(blob, 8)
@@ -82,9 +108,11 @@ def describe(blob: bytes) -> list[DescribedBlock]:
     strict = blob[rec_at - 3:rec_at] == b"\x00\x00\x04"
 
     def rec(index: int) -> int:
+        """Read one packed block record by its index."""
         return int.from_bytes(blob[rec_at + index * 9:rec_at + index * 9 + 9], "little")
 
     def field(value: int, low: int, width: int) -> int:
+        """Extract a bit field of a given width starting at the low bit."""
         return (value >> low) & ((1 << width) - 1)
 
     output: list[DescribedBlock] = []
@@ -165,6 +193,16 @@ def describe(blob: bytes) -> list[DescribedBlock]:
 
 
 def deshuffle(data: bytearray, pattern: int) -> None:
+    """Reassemble interleaved fields in each data unit in place.
+
+    Args:
+        data: Mutable decoded bytes to transform.
+        pattern: Index of the layout's shuffle pattern, with zero for no
+            shuffle.
+
+    Raises:
+        ValueError: The pattern index exceeds the supported table.
+    """
     if pattern >= len(SHUFFLES):
         raise ValueError(f"shuffle pattern {pattern} is not one of the known ones")
     fields = SHUFFLES[pattern]
@@ -186,6 +224,20 @@ def deshuffle(data: bytearray, pattern: int) -> None:
 
 
 def decode_described(image: bytes, block: DescribedBlock) -> bytes:
+    """Decode and deshuffle one block from the stored image.
+
+    Args:
+        image: Complete stored inner-image bytes.
+        block: Stored span, decoded length, and modes from the layout
+            descriptor.
+
+    Returns:
+        Uncompressed bytes for the logical block.
+
+    Raises:
+        ValueError: The geometry, encoded payload, or shuffle pattern is
+            invalid.
+    """
     if block.length == 0 or block.length > UBLOCK:
         raise ValueError("not a Kraken block length")
     if block.stored_len > 2 * WINDOW or block.even_len > block.stored_len:
@@ -199,6 +251,7 @@ def decode_described(image: bytes, block: DescribedBlock) -> bytes:
     halves = []
 
     def half(data: bytes, is_lz: bool, delta: bool, logical: int) -> kraken.Half:
+        """Classify one half as raw, entropy-coded, or LZ-coded."""
         if is_lz:
             return kraken.Half("delta" if delta else "lz", data)
         if len(data) < logical:
@@ -217,7 +270,18 @@ def decode_described(image: bytes, block: DescribedBlock) -> bytes:
 
 
 def decode_image(image: bytes, blob: bytes) -> bytes:
-    """Decode every block of a stored image into its logical mount."""
+    """Reconstruct the logical mount from a Kraken image and layout.
+
+    Args:
+        image: Stored inner-image bytes.
+        blob: Complete Kraken layout descriptor.
+
+    Returns:
+        Concatenated decoded blocks in logical mount order.
+
+    Raises:
+        ValueError: The layout or a stored block is invalid.
+    """
     output = bytearray()
     for block in describe(blob):
         output += decode_described(image, block)

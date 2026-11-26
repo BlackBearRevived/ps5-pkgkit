@@ -58,6 +58,13 @@ def align_up(value: int, alignment: int) -> int:
 
 
 def inode_table_len(count: int) -> int:
-    """Length in bytes of an inode table holding ``count`` inodes: whole blocks."""
+    """Return the inode table length rounded up to whole blocks.
+
+    Args:
+        count: Number of inodes the table must hold.
+
+    Returns:
+        Length in bytes, with a minimum of one block.
+    """
     blocks = max((count + INODES_PER_BLOCK - 1) // INODES_PER_BLOCK, 1)
     return blocks * BLOCK

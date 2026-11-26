@@ -25,7 +25,17 @@ class VerificationError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class PackageVerification:
-    """Verification of the container and, when supplied, a trusted file digest."""
+    """Results of package structure and digest verification.
+
+    Attributes:
+        size: Length of the package in bytes.
+        sha256: Hexadecimal SHA-256 digest of the entire package.
+        content_id: Content identifier from the container.
+        title_id: Title identifier from the packaged metadata.
+        content_version: Content version from the packaged metadata.
+        container_entries: Number of entries in the content container.
+        expected_sha256_verified: Whether a caller-supplied digest matched.
+    """
 
     size: int
     sha256: str
@@ -37,6 +47,21 @@ class PackageVerification:
 
 
 def _read_at(package: BinaryIO, offset: int, size: int, end: int, name: str) -> bytes:
+    """Read exactly the requested package range.
+
+    Args:
+        package: Open, seekable binary package stream.
+        offset: Absolute starting offset in bytes.
+        size: Number of bytes to read.
+        end: Exclusive upper bound of the permitted range.
+        name: Structure name used in error messages.
+
+    Returns:
+        The requested bytes.
+
+    Raises:
+        VerificationError: The range exceeds the bound or the stream ends early.
+    """
     if offset > end or size > end - offset:
         raise VerificationError(f"{name} extends past the package")
     package.seek(offset)
@@ -49,6 +74,21 @@ def _read_at(package: BinaryIO, offset: int, size: int, end: int, name: str) -> 
 def _digest_region(
     package: BinaryIO, offset: int, size: int, make_hash: Callable,
 ) -> bytes:
+    """Hash an exact byte range from an open package stream.
+
+    Args:
+        package: Open, seekable binary package stream.
+        offset: Absolute starting offset in bytes.
+        size: Number of bytes to hash.
+        make_hash: Callable that creates a hash object with update() and
+            digest().
+
+    Returns:
+        Raw digest bytes.
+
+    Raises:
+        VerificationError: The stream ends before the entire range is read.
+    """
     digest = make_hash()
     package.seek(offset)
     while size:
@@ -63,7 +103,23 @@ def _digest_region(
 def verify_package(
     path: str | Path, *, expected_sha256: str | None = None,
 ) -> PackageVerification:
-    """Check package structure, container checksums and optional whole-file SHA-256."""
+    """Check package structure, container checksums, and title metadata.
+
+    Args:
+        path: Path to a regular PS5 package file.
+        expected_sha256: Optional trusted whole-file SHA-256 as 64 hexadecimal
+            digits.
+
+    Returns:
+        Verified title metadata, container entry count, and computed file
+        digest.
+
+    Raises:
+        VerificationError: The package has invalid structure or metadata, fails
+            a digest check, or changes during verification. Also raised for a
+            malformed expected digest.
+        OSError: The package cannot be opened or read.
+    """
     if expected_sha256 is not None and re.fullmatch(r"[0-9a-fA-F]{64}", expected_sha256) is None:
         raise VerificationError("expected SHA-256 must contain exactly 64 hexadecimal digits")
 

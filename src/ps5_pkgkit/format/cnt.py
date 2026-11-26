@@ -1,4 +1,4 @@
-"""The ``\\x7FCNT`` content container: header, entry table, body and its digests."""
+"""Serialize the content container header, entries, payloads, and digests."""
 
 from __future__ import annotations
 
@@ -90,6 +90,14 @@ LICENSED_DRM_TYPE = 0x10
 
 @dataclass(frozen=True, slots=True)
 class ExtraEntry:
+    """An optional payload to add to the content container.
+
+    Attributes:
+        id: Numeric entry ID distinct from the fixed and other optional entries.
+        name: Name to record in the entry-name table.
+        data: Payload bytes before any padding or encryption.
+        key_index: Optional key slot for a protected entry.
+    """
     id: int
     name: str
     data: bytes
@@ -97,6 +105,15 @@ class ExtraEntry:
 
 
 def content_class(param_json: bytes, has_eboot: bool) -> tuple[int, int]:
+    """Choose the container content type and flags for a title.
+
+    Args:
+        param_json: Packaged title metadata as JSON bytes.
+        has_eboot: Whether the image contains a root eboot.bin file.
+
+    Returns:
+        The numeric content type and content flags, in that order.
+    """
     parsed = paramjson.parse(param_json)
     has = lambda key: parsed is not None and key in parsed
     if not has_eboot and parsed is not None and not has("applicationCategoryType") \
@@ -109,6 +126,7 @@ def content_class(param_json: bytes, has_eboot: bool) -> tuple[int, int]:
 
 
 def _body_rank(entry_id: int) -> tuple[int, int]:
+    """Return the physical sort key for a container entry ID."""
     fixed = {
         ENTRY_KEYS: (0, 0), IMAGE_KEY: (1, 0), GENERAL_DIGESTS: (2, 0),
         METAS: (3, 0), DIGESTS: (4, 0), ENTRY_NAMES: (5, 0),
@@ -124,6 +142,15 @@ def _body_rank(entry_id: int) -> tuple[int, int]:
 
 
 def _keys_entry(content_id: str, passcode: str) -> bytes:
+    """Serialize the container's entry-key record.
+
+    Args:
+        content_id: ASCII package content identifier.
+        passcode: ASCII passcode for the package.
+
+    Returns:
+        Encoded entry-key payload.
+    """
     padded = content_id.encode("ascii")[:48].ljust(48, b"\x00")
     output = bytearray(sha3(padded))
     derived = [derive_pfs_key(content_id, passcode, index) for index in range(7)]
@@ -138,6 +165,14 @@ def _keys_entry(content_id: str, passcode: str) -> bytes:
 
 
 def _image_key_entry(ekpfs: bytes) -> bytes:
+    """Encode the image key as a fixed-size container entry.
+
+    Args:
+        ekpfs: Raw PFS image key.
+
+    Returns:
+        The padded image-key payload.
+    """
     output = bytearray(0x800)
     at = 0
     while at < len(output):
@@ -150,12 +185,25 @@ def _image_key_entry(ekpfs: bytes) -> bytes:
 
 def _general_digests(head: bytes, descriptor: bytes, game_digest: bytes,
                      entry_digest) -> bytes:
+    """Assemble the summary digests recorded in the container.
+
+    Args:
+        head: Main container header bytes.
+        descriptor: Image descriptor bytes.
+        game_digest: SHA3-256 digest of the outer superblock.
+        entry_digest (Callable): Lookup from entry ID to raw digest, or None if
+            absent.
+
+    Returns:
+        The general-digests payload.
+    """
     output = bytearray(GENERAL_LEN)
     output[0x00:0x02] = (0xD256).to_bytes(2, "big")
     output[0x02:0x04] = (0x0102).to_bytes(2, "big")
     output[0x1C:0x20] = GENERAL_DIGEST_SET.to_bytes(4, "big")
 
     def slot(index: int, digest: bytes) -> None:
+        """Store a digest in a numbered slot of the output buffer."""
         output[0x20 + index * 32:0x40 + index * 32] = digest
 
     pre = head[0x40:0x78] + game_digest + bytes(32)
@@ -183,6 +231,23 @@ def _general_digests(head: bytes, descriptor: bytes, game_digest: bytes,
 
 @dataclass(slots=True)
 class Facts:
+    """Container geometry and hashes for install metadata.
+
+    Attributes:
+        container_size: Total padded container size in bytes.
+        mandatory_size: Size of the prefix through the mandatory entries, in
+            bytes.
+        body_offset: Container-relative byte offset of the body.
+        body_size: Length of the body, including trailing padding.
+        body_digest: SHA3-256 digest of the padded body.
+        package_digest: Digest recorded before the container signature.
+        fih_digest: Digest of the finalized-image header.
+        content_digest: Content identity digest from the general-digests entry.
+        header_digest: Header and image descriptor digest.
+        system_digest: Aggregate digest of system entries.
+        param_digest: Digest of the param.json entry.
+        entries: Named (offset, size, name) entries in physical order.
+    """
     container_size: int
     mandatory_size: int
     body_offset: int
@@ -199,12 +264,41 @@ class Facts:
 
 @dataclass(slots=True)
 class Container:
+    """A serialized content container and its metadata.
+
+    Attributes:
+        bytes: Complete serialized content container.
+        facts: Layout and digest information for related install metadata.
+    """
     bytes: bytes
     facts: Facts
 
 
 @dataclass(slots=True)
 class CntParams:
+    """Inputs for writing a content container.
+
+    Attributes:
+        content_id: 36-character ASCII content identifier.
+        param_json: Packaged title metadata.
+        icon_png: PNG icon bytes, or empty if absent.
+        icon_dds: DDS icon bytes, or empty if absent.
+        extras: Additional named payloads.
+        playgo_chunk: Serialized PlayGo chunk descriptor.
+        playgo_hash_table: Serialized PlayGo file hash table.
+        playgo_ficm: Serialized PlayGo file-to-chunk map.
+        imagedigs: Outer image block digests in physical block order.
+        game_digest: Digest of the outer superblock.
+        fih_block: Serialized finalized-image header.
+        outer_size: Outer image length in bytes.
+        cnt_offset: Absolute offset of the container in the package.
+        seed: Seed value recorded in the container.
+        passcode: Passcode for the package's format records.
+        content_type: Numeric content type for the title.
+        drm_type: Numeric DRM type recorded by the writer.
+        content_flags: Bit flags describing the package content.
+        inner_size: Logical inner-image size in bytes.
+    """
     content_id: str
     param_json: bytes
     icon_png: bytes
@@ -227,11 +321,25 @@ class CntParams:
 
 
 class _Body:
+    """The aligned container payload buffer and its entry index.
+
+    Attributes:
+        bytes: Mutable buffer beginning with the reserved header region.
+        spans: Container-relative offsets and declared lengths keyed by entry
+            ID.
+    """
     def __init__(self) -> None:
+        """Reserve the header space and initialize the entry span index."""
         self.bytes = bytearray(BODY_AT)
         self.spans: dict[int, tuple[int, int]] = {}
 
     def add(self, entry_id: int, data: bytes) -> None:
+        """Append an entry at the next 16-byte boundary.
+
+        Args:
+            entry_id: ID to associate with the new span.
+            data: Bytes to append to the container body.
+        """
         at = (len(self.bytes) + 15) // 16 * 16
         self.bytes += bytes(at - len(self.bytes))
         start = len(self.bytes)
@@ -239,18 +347,39 @@ class _Body:
         self.spans[entry_id] = (start, len(data))
 
     def add_sized(self, entry_id: int, data: bytes, size: int) -> None:
+        """Record an entry whose declared length differs from its stored bytes.
+
+        Args:
+            entry_id: ID to associate with the new span.
+            data: Stored payload, including any padding.
+            size: Declared payload length in bytes.
+        """
         self.add(entry_id, data)
         self.spans[entry_id] = (self.spans[entry_id][0], size)
 
     def span(self, entry_id: int) -> tuple[int, int]:
+        """Return an entry's relative byte offset and declared length."""
         return self.spans[entry_id]
 
     def payload(self, entry_id: int) -> bytes:
+        """Read the declared bytes of an entry already stored in the body."""
         at, size = self.span(entry_id)
         return bytes(self.bytes[at:at + size])
 
 
 def write(p: CntParams) -> Container:
+    """Serialize the content container for a package.
+
+    Args:
+        p: Title metadata, payloads, image geometry, and digests.
+
+    Returns:
+        Padded container bytes and facts for the install manifest.
+
+    Raises:
+        ValueError: The content identifier is invalid or an entry ID is
+            duplicated.
+    """
     if len(p.content_id) != 36 or not p.content_id.isascii():
         raise ValueError("content id must be 36 ASCII characters")
     entries = list(ENTRIES)
@@ -279,6 +408,7 @@ def write(p: CntParams) -> Container:
     table_placeholder = bytes(digest_table_len)
 
     def payload_of(entry_id: int) -> bytes:
+        """Look up a fixed or optional entry's bytes, defaulting to empty."""
         fixed = {
             ENTRY_KEYS: keys_payload, IMAGE_KEY: image_key_payload,
             GENERAL_DIGESTS: general_placeholder, METAS: table_placeholder,
@@ -379,6 +509,7 @@ def write(p: CntParams) -> Container:
     descriptor[0x38:0x3C] = (0x10000).to_bytes(4, "big")
 
     def entry_digest(entry_id: int):
+        """Look up a computed entry digest, or return None if absent."""
         for index, (current, _, _) in enumerate(entries):
             if current == entry_id:
                 return bytes(digests[index * 32:(index + 1) * 32])
@@ -441,6 +572,7 @@ def write(p: CntParams) -> Container:
     container[SIGNATURE_AT:SIGNATURE_AT + len(signature)] = signature
 
     def slot(index: int) -> bytes:
+        """Read one digest from the completed general-digests entry."""
         return general[0x20 + index * 32:0x40 + index * 32]
 
     facts = Facts(

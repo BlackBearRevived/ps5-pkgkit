@@ -38,6 +38,16 @@ copy in this module, so they can be replaced from one place.
 
 
 def main() -> int:
+    """Regenerate the vendored debug-format constants from the reference file.
+
+    Returns:
+        Zero after writing the output module.
+
+    Raises:
+        SystemExit: Command-line usage is invalid or a required constant is
+            absent.
+        OSError: The input cannot be opened or the output cannot be written.
+    """
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("keys_rs", type=Path)
     parser.add_argument(

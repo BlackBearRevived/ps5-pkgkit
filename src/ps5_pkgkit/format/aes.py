@@ -9,6 +9,7 @@ from __future__ import annotations
 
 
 def _build_sbox() -> tuple[list[int], list[int]]:
+    """Generate the AES substitution table and its inverse."""
     sbox = [0] * 256
     inverse = [0] * 256
     p = q = 1
@@ -37,11 +38,13 @@ _RCON = (0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1B, 0x36)
 
 
 def _xtime(value: int) -> int:
+    """Multiply a byte by x in the AES finite field."""
     value <<= 1
     return (value ^ 0x1B) & 0xFF if value & 0x100 else value
 
 
 def _mul(value: int, factor: int) -> int:
+    """Multiply two byte values in the AES finite field."""
     result = 0
     for bit in range(8):
         if factor & (1 << bit):
@@ -54,6 +57,14 @@ class Aes128:
     """AES-128 block cipher (FIPS-197)."""
 
     def __init__(self, key: bytes):
+        """Expand a 16-byte key for AES-128.
+
+        Args:
+            key: Raw 16-byte AES key.
+
+        Raises:
+            ValueError: The key length is not 16 bytes.
+        """
         if len(key) != 16:
             raise ValueError("AES-128 needs a 16-byte key")
         words = [list(key[index:index + 4]) for index in range(0, 16, 4)]
@@ -67,12 +78,14 @@ class Aes128:
         self._round_keys = [bytes(sum(words[4 * r:4 * r + 4], [])) for r in range(11)]
 
     def _add_round_key(self, state: list[int], round_number: int) -> None:
+        """XOR the selected round key into the state in place."""
         key = self._round_keys[round_number]
         for index in range(16):
             state[index] ^= key[index]
 
     @staticmethod
     def _shift_rows(state: list[int]) -> None:
+        """Rotate the AES state rows in place."""
         state[:] = [
             state[0], state[5], state[10], state[15],
             state[4], state[9], state[14], state[3],
@@ -82,6 +95,7 @@ class Aes128:
 
     @staticmethod
     def _inverse_shift_rows(state: list[int]) -> None:
+        """Undo the AES state row rotations in place."""
         state[:] = [
             state[0], state[13], state[10], state[7],
             state[4], state[1], state[14], state[11],
@@ -91,6 +105,7 @@ class Aes128:
 
     @staticmethod
     def _mix_columns(state: list[int]) -> None:
+        """Mix each AES state column in place."""
         for column in range(4):
             at = 4 * column
             a0, a1, a2, a3 = state[at:at + 4]
@@ -101,6 +116,7 @@ class Aes128:
 
     @staticmethod
     def _inverse_mix_columns(state: list[int]) -> None:
+        """Undo column mixing in the AES state in place."""
         for column in range(4):
             at = 4 * column
             a0, a1, a2, a3 = state[at:at + 4]
@@ -110,6 +126,17 @@ class Aes128:
             state[at + 3] = _mul(a0, 11) ^ _mul(a1, 13) ^ _mul(a2, 9) ^ _mul(a3, 14)
 
     def encrypt_block(self, block: bytes) -> bytes:
+        """Encrypt a single AES block.
+
+        Args:
+            block: Exactly 16 bytes of plaintext.
+
+        Returns:
+            The encrypted block.
+
+        Raises:
+            ValueError: The block length is not 16 bytes.
+        """
         if len(block) != 16:
             raise ValueError("AES block must be 16 bytes")
         state = list(block)
@@ -125,6 +152,17 @@ class Aes128:
         return bytes(state)
 
     def decrypt_block(self, block: bytes) -> bytes:
+        """Decrypt a single AES block.
+
+        Args:
+            block: Exactly 16 bytes of ciphertext.
+
+        Returns:
+            The decrypted block.
+
+        Raises:
+            ValueError: The block length is not 16 bytes.
+        """
         if len(block) != 16:
             raise ValueError("AES block must be 16 bytes")
         state = list(block)
@@ -141,6 +179,19 @@ class Aes128:
 
 
 def cbc_encrypt(key: bytes, iv: bytes, data: bytes) -> bytes:
+    """Encrypt whole blocks with AES-128 in CBC mode.
+
+    Args:
+        key: Raw 16-byte AES key.
+        iv: 16-byte initialization vector.
+        data: Plaintext whose length is a multiple of 16 bytes.
+
+    Returns:
+        Ciphertext of the same length as the plaintext.
+
+    Raises:
+        ValueError: The key or block length is invalid.
+    """
     if len(data) % 16:
         raise ValueError("CBC data must be whole 16-byte blocks")
     cipher = Aes128(key)
@@ -154,6 +205,20 @@ def cbc_encrypt(key: bytes, iv: bytes, data: bytes) -> bytes:
 
 
 def cbc_decrypt(key: bytes, iv: bytes, data: bytes) -> bytes:
+    """Decrypt whole blocks with AES-128 in CBC mode.
+
+    Args:
+        key: Raw 16-byte AES key.
+        iv: 16-byte initialization vector.
+        data: Ciphertext whose length is a multiple of 16 bytes.
+
+    Returns:
+        Plaintext of the same length as the ciphertext, without removing
+        padding.
+
+    Raises:
+        ValueError: The key or block length is invalid.
+    """
     if len(data) % 16:
         raise ValueError("CBC data must be whole 16-byte blocks")
     cipher = Aes128(key)
@@ -168,6 +233,7 @@ def cbc_decrypt(key: bytes, iv: bytes, data: bytes) -> bytes:
 
 
 def _xts_double(tweak: bytearray) -> None:
+    """Advance the XTS tweak to the next block in place."""
     carry = tweak[15] >> 7
     for index in range(15, 0, -1):
         tweak[index] = ((tweak[index] << 1) | (tweak[index - 1] >> 7)) & 0xFF
@@ -178,14 +244,37 @@ class Xts:
     """AES-128-XTS for one data unit (IEEE 1619), as PFS images use it."""
 
     def __init__(self, data_key: bytes, tweak_key: bytes):
+        """Initialize the two AES-128 ciphers used by XTS.
+
+        Args:
+            data_key: 16-byte key for transforming the data blocks.
+            tweak_key: 16-byte key for generating the starting tweak.
+
+        Raises:
+            ValueError: Either key is not 16 bytes.
+        """
         self._data = Aes128(data_key)
         self._tweak = Aes128(tweak_key)
 
     def _start_tweak(self, sector: int) -> bytearray:
+        """Derive the first block tweak for the given sector number."""
         block = sector.to_bytes(8, "little") + bytes(8)
         return bytearray(self._tweak.encrypt_block(block))
 
     def _apply(self, sector: int, data: bytes, *, encrypt: bool) -> bytes:
+        """Transform a complete XTS data unit.
+
+        Args:
+            sector: Unsigned sector identifier for the data unit.
+            data: Nonempty input spanning whole AES blocks.
+            encrypt: Whether to encrypt the input.
+
+        Returns:
+            Transformed bytes of the same length as the input.
+
+        Raises:
+            ValueError: The data unit is empty or ends in a partial AES block.
+        """
         if not data or len(data) % 16:
             raise ValueError("XTS data unit must be a non-zero multiple of 16 bytes")
         tweak = self._start_tweak(sector)
@@ -199,7 +288,31 @@ class Xts:
         return bytes(output)
 
     def encrypt(self, sector: int, data: bytes) -> bytes:
+        """Encrypt one XTS data unit.
+
+        Args:
+            sector: Unsigned sector identifier for the data unit.
+            data: Nonempty plaintext spanning whole 16-byte blocks.
+
+        Returns:
+            Ciphertext of the same length.
+
+        Raises:
+            ValueError: The data unit has an invalid length.
+        """
         return self._apply(sector, data, encrypt=True)
 
     def decrypt(self, sector: int, data: bytes) -> bytes:
+        """Decrypt one XTS data unit.
+
+        Args:
+            sector: Unsigned sector identifier used when encrypting.
+            data: Nonempty ciphertext spanning whole 16-byte blocks.
+
+        Returns:
+            Plaintext of the same length.
+
+        Raises:
+            ValueError: The data unit has an invalid length.
+        """
         return self._apply(sector, data, encrypt=False)

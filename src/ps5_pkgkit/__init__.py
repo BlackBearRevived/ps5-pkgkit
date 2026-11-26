@@ -1,4 +1,8 @@
-"""Build, inspect and verify PS5 packages."""
+"""Build, inspect, and verify PS5 packages.
+
+Import build_package to create a package from a staged title, inspect_source to
+validate source files, or verify_package to check an existing package.
+"""
 
 __version__ = "0.1.0"
 

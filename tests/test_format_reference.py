@@ -1,4 +1,8 @@
-"""Checks against the reference Hello World package recorded in the artifacts."""
+"""Compare serialized format structures with the Hello World reference.
+
+The tests use the captured package and the staged source folder to check both
+logical geometry and exact output bytes.
+"""
 
 import os
 from pathlib import Path
@@ -28,10 +32,12 @@ PACKAGE = FIXTURE / "PS5-PKG-Hello-World.pkg"
 
 
 def _read(path: Path) -> bytes:
+    """Read an entire reference fixture file."""
     return path.read_bytes()
 
 
 def _packaged_param() -> bytes | None:
+    """Extract the reference param.json payload if the package is present."""
     if not PACKAGE.is_file():
         return None
     data = PACKAGE.read_bytes()
@@ -50,7 +56,9 @@ def _packaged_param() -> bytes | None:
 
 @unittest.skipUnless(SOURCE.is_dir(), "reference source folder is not available")
 class ReferenceParamTests(unittest.TestCase):
+    """Compare metadata rewrites and size-class selection with the fixture."""
     def test_rewrites_match_the_packaged_param_json(self):
+        """Apply the rewrites and compare metadata bytes with the fixture."""
         packaged = _packaged_param()
         if packaged is None:
             self.skipTest("reference package is not available")
@@ -74,22 +82,34 @@ class ReferenceParamTests(unittest.TestCase):
         self.assertEqual(result[0], packaged)
 
     def test_size_class_for_the_reference(self):
+        """Check that the reference payload fits the standard size class."""
         chosen = sdkrules.choose_size_class(1 << 29, 8, 0)
         self.assertEqual(chosen.attribute, 0)
 
 
 @unittest.skipUnless(SOURCE.is_dir(), "reference source folder is not available")
 class ReferenceRepairTests(unittest.TestCase):
+    """Check normalization plans against two captured executables."""
     def _plan(self, relative):
+        """Read a fixture executable and return its size and repair plan.
+
+        Args:
+            relative (str): Executable path relative to the staged source.
+
+        Returns:
+            Original byte length and the repair plan, if any.
+        """
         path = SOURCE / relative
         data = path.read_bytes()
 
         def read(offset, length):
+            """Serve a byte range from the in-memory executable fixture."""
             return data[offset:offset + length]
 
         return len(data), selfrepair.plan(data[:0x20], len(data), read)
 
     def test_eboot_repair(self):
+        """Check that the executable needs a magic rewrite and realignment."""
         size, repair = self._plan("eboot.bin")
         self.assertIsNotNone(repair)
         self.assertTrue(repair.rewrite_magic)
@@ -98,6 +118,7 @@ class ReferenceRepairTests(unittest.TestCase):
         self.assertEqual(repair.new_size(size), size + 8)
 
     def test_libc_repair(self):
+        """Check trailer realignment while retaining the module's magic."""
         size, repair = self._plan("sce_module/libc.prx")
         self.assertIsNotNone(repair)
         self.assertFalse(repair.rewrite_magic)
@@ -109,6 +130,7 @@ class ReferenceRepairTests(unittest.TestCase):
 @unittest.skipUnless(PACKAGE.is_file() and SOURCE.is_dir(),
                      "reference artifacts are not available")
 class ReferenceGeometryTests(unittest.TestCase):
+    """Compare inner planning and outer header bytes with the fixture."""
     CONTAINER_ONLY = {
         "sce_sys/icon0.png", "sce_sys/icon0.dds", "sce_sys/pic0.png",
         "sce_sys/pic0.dds", "sce_sys/pic1.dds", "sce_sys/pic2.dds",
@@ -116,6 +138,7 @@ class ReferenceGeometryTests(unittest.TestCase):
     }
 
     def _files(self):
+        """Use packaged metadata and repaired file sizes in the inventory."""
         packaged = _packaged_param()
         files = []
         for path in sorted(SOURCE.rglob("*")):
@@ -133,6 +156,7 @@ class ReferenceGeometryTests(unittest.TestCase):
         return files
 
     def test_plan_matches_the_reference_geometry(self):
+        """Match metadata base, block counts, and file positions."""
         built = plan.build_tree(self._files(), spread=True)
         self.assertEqual(built.meta_base, 0x500000)
         self.assertEqual(built.ndblock, 0x5B)
@@ -158,6 +182,7 @@ class ReferenceGeometryTests(unittest.TestCase):
         ])
 
     def test_outer_image_matches_the_reference_bytes(self):
+        """Reuse the reference inner image and compare the full outer image."""
         package = _read(PACKAGE)
         inner = package[0x10000:0x20000]
         naps = package[0x20000:0x20000 + 0x190]
@@ -165,6 +190,7 @@ class ReferenceGeometryTests(unittest.TestCase):
         self.assertEqual(ours.image, package[0x10000:0x80000])
 
     def test_fih_matches_the_reference_bytes(self):
+        """Rebuild and compare the first 64 KiB of the reference package."""
         package = _read(PACKAGE)
         outer_image = package[0x10000:0x80000]
         game_digest = crypto.sha3(outer_image[2 * 0x10000:3 * 0x10000])
@@ -188,9 +214,11 @@ class ReferenceGeometryTests(unittest.TestCase):
 @unittest.skipUnless(PACKAGE.is_file() and SOURCE.is_dir(),
                      "reference artifacts are not available")
 class ReferenceContainerTests(unittest.TestCase):
+    """Check container entries and install metadata against the fixture."""
     CONTENT_ID = "UP9000-PPSA99771_00-PKGHELLOWORLD001"
 
     def _entry_table(self):
+        """Read the reference container's rows and index their payload spans."""
         data = _read(PACKAGE)
         cnt_at = int.from_bytes(data[0x58:0x60], "little")
         table = cnt_at + int.from_bytes(data[cnt_at + 0x18:cnt_at + 0x1C], "big")
@@ -204,6 +232,7 @@ class ReferenceContainerTests(unittest.TestCase):
         return data, cnt_at, entries, rows
 
     def test_license_entries_are_our_bytes_encrypted(self):
+        """Compare decoded fixture license payloads with generated records."""
         data, cnt_at, entries, rows = self._entry_table()
         for entry_id, plain in ((0x0400, license.license_dat(self.CONTENT_ID)),
                                 (0x0401, license.license_info(self.CONTENT_ID))):
@@ -217,6 +246,7 @@ class ReferenceContainerTests(unittest.TestCase):
             self.assertEqual(len(plain), size)
 
     def test_playgo_tables_match(self):
+        """Match the fixture's PlayGo tables using the planned file offsets."""
         data, cnt_at, entries, _ = self._entry_table()
         files = [
             ("sce_sys/keystone", 0x10000, 96),
@@ -233,9 +263,11 @@ class ReferenceContainerTests(unittest.TestCase):
             self.assertEqual(data[cnt_at + offset:cnt_at + offset + size], ours)
 
     def test_container_matches_the_reference_bytes(self):
+        """Compare the generated container with the full captured segment."""
         data, cnt_at, entries, _ = self._entry_table()
 
         def payload(entry_id):
+            """Read the declared payload bytes of a fixture container entry."""
             offset, size = entries[entry_id]
             return data[cnt_at + offset:cnt_at + offset + size]
 
@@ -288,9 +320,11 @@ class ReferenceContainerTests(unittest.TestCase):
         self.assertEqual(built.bytes, data[cnt_at:si_at])
 
     def test_manifest_matches_the_reference_bytes(self):
+        """Compare generated manifest XML with the reference ZIP member."""
         data, cnt_at, entries, _ = self._entry_table()
 
         def payload(entry_id):
+            """Read the declared payload used by the reference manifest test."""
             offset, size = entries[entry_id]
             return data[cnt_at + offset:cnt_at + offset + size]
 
@@ -342,6 +376,7 @@ class ReferenceContainerTests(unittest.TestCase):
         self.assertEqual(manifest_bytes, expected)
 
     def test_si_members_and_zip_match(self):
+        """Rebuild the ZIP and compare its CRC table and mount metadata."""
         data, cnt_at, entries, _ = self._entry_table()
         si_at = cnt_at + int.from_bytes(data[cnt_at + 0x7C:cnt_at + 0x80], "big")
         theirs = data[si_at:]
@@ -358,6 +393,15 @@ class ReferenceContainerTests(unittest.TestCase):
 
 
 def encrypt_entry(material: bytes, stored: bytes) -> bytes:
+    """Decode a reference entry with prepared CBC material.
+
+    Args:
+        material: 32 bytes of prepared IV and key material.
+        stored: Stored ciphertext bytes for the entry.
+
+    Returns:
+        Decrypted entry bytes.
+    """
     from ps5_pkgkit.format.aes import cbc_decrypt
     return cbc_decrypt(material[16:], material[:16], stored)
 

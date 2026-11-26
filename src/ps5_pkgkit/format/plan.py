@@ -24,6 +24,21 @@ from .flt import (
 
 @dataclass(slots=True)
 class PlannedFile:
+    """A file and its assigned positions in the inner image.
+
+    Attributes:
+        path: Slash-separated path within the inner image.
+        size: Payload length in bytes.
+        inode: Assigned inode number.
+        afid: Assigned application file ID.
+        logical_offset: Payload offset in the logical mount.
+        on_disk_offset: Payload offset in the stored inner layout.
+        parent_inode: Inode number of the containing directory.
+        dirent_offset: Byte offset of the entry in the parent directory.
+        sce_sys: Whether the file belongs to the system metadata tree.
+        generated: Whether the builder provides the payload.
+        module: Whether the payload is an executable module.
+    """
     path: str
     size: int
     inode: int = 0
@@ -38,16 +53,29 @@ class PlannedFile:
 
     @property
     def mode(self) -> int:
+        """The inode mode for a system or regular payload file."""
         return c.MODE_FILE_SCE_SYS if self.sce_sys else c.MODE_FILE
 
     @property
     def inode_flags(self) -> int:
+        """The inode flags for the file's type and location."""
         kind = c.FLAGS_MODULE if self.module else c.FLAGS_BLOB
         return c.FLAGS_DATA | kind | (c.FLAGS_SCE_SYS if self.sce_sys else 0)
 
 
 @dataclass(slots=True)
 class PlannedDir:
+    """A directory in the planned inner image.
+
+    Attributes:
+        path: Slash-separated path, empty for uroot.
+        inode: Assigned inode number.
+        parent_inode: Inode number of the parent directory.
+        nlink: Directory link count.
+        dirents: Entries as (name, inode, kind) triples in directory order.
+        dirent_offset: Byte offset in the parent directory, or -1 if not
+            assigned.
+    """
     path: str
     inode: int
     parent_inode: int
@@ -57,11 +85,25 @@ class PlannedDir:
 
     @property
     def sce_sys(self) -> bool:
+        """Whether this directory is sce_sys or one of its descendants."""
         return self.path == "sce_sys" or self.path.startswith("sce_sys/")
 
 
 @dataclass(slots=True)
 class MetadataLayout:
+    """Locations of the inner metadata tables and directory streams.
+
+    A span is a pair of logical byte offset and length.
+
+    Attributes:
+        inode_table: Span of the inode table.
+        super_root: Span of the super-root directory entries.
+        flt: Span of the inode flat-path table.
+        flt_apr: Span of the application file flat-path table.
+        afid: Span of the application file ID to inode table.
+        dirs: Directory spans in plan directory order.
+        blocks: Total metadata length in blocks.
+    """
     inode_table: tuple[int, int] = (0, 0)
     super_root: tuple[int, int] = (0, 0)
     flt: tuple[int, int] = (0, 0)
@@ -73,6 +115,24 @@ class MetadataLayout:
 
 @dataclass(slots=True)
 class Plan:
+    """Hold file placements, lookup tables, and inner image geometry.
+
+    Attributes:
+        dirs: Planned directories in inode order.
+        files: Planned files in inode order.
+        afid_order: Indices into files, sorted by application file ID.
+        flt_inode: Path hash and payload pairs for the inode flat-path table.
+        flt_apr: Path hash and payload pairs for the APR flat-path table.
+        afid_to_ino: Inode number for each application file ID.
+        first_file_inode: Inode number assigned to the first file.
+        data_end: Stored byte offset after the file data and alignment padding.
+        meta_base: Logical byte offset at which metadata starts.
+        ndblock: Total mount length in blocks.
+        metadata_blocks: Metadata length in blocks.
+        metadata: Spans for the metadata structures.
+        content_inodes: Number of content files and non-root directories.
+        app_file_count: Number of application payload files.
+    """
     dirs: list[PlannedDir]
     files: list[PlannedFile]
     afid_order: list[int]
@@ -89,22 +149,27 @@ class Plan:
     app_file_count: int
 
     def has_eboot(self) -> bool:
+        """Check whether the plan contains a root eboot.bin."""
         return any(f.path == "eboot.bin" for f in self.files)
 
     def inner_files(self) -> list[tuple[str, int, int]]:
-        """``(path, logical offset, size)`` in afid order."""
+        """Return (path, logical offset, size) triples in AFID order."""
         return [
             (self.files[index].path, self.files[index].logical_offset, self.files[index].size)
             for index in self.afid_order
         ]
 
     def mount_files(self) -> list[tuple[str, int, int]]:
-        """``(path, offset in the mount image, size)`` for every file, inode order."""
+        """Return (path, mount offset, size) triples in inode order."""
         base = c.BLOCK
         return [(f.path, base + f.on_disk_offset, f.size) for f in self.files]
 
     def placements(self) -> list[tuple[int, int, int]]:
-        """``(logical offset, on-disk offset, size)`` in afid order."""
+        """Return file placements in AFID order.
+
+        Returns:
+            Triples of logical byte offset, stored byte offset, and length.
+        """
         return [
             (self.files[index].logical_offset, self.files[index].on_disk_offset,
              self.files[index].size)
@@ -112,6 +177,13 @@ class Plan:
         ]
 
     def mark_modules(self, is_module: Callable[[str], bool]) -> None:
+        """Update the plan's module flags using a path predicate.
+
+        Args:
+            is_module: Callable that accepts one file path and returns whether
+                its contents identify a module. It is called only for
+                non-generated files at least four bytes long.
+        """
         for planned in self.files:
             planned.module = (
                 not planned.generated and planned.size >= 4 and bool(is_module(planned.path))
@@ -119,14 +191,21 @@ class Plan:
 
 
 def is_module_header(head: bytes) -> bool:
-    """Whether a file's first bytes are a SELF (PS4/PS5, fake or signed) or a plain ELF."""
+    """Check for a PS4 or PS5 SELF or plain ELF header.
+
+    Args:
+        head: Leading file bytes to test against the recognized signatures.
+
+    Returns:
+        True if the first four bytes identify a supported module.
+    """
     return len(head) >= 4 and head[:4] in (
         c.SELF_PS5, c.SELF_PS4, c.SIGNED_SELF, c.RAW_ELF,
     )
 
 
 def super_root_dirents() -> list[tuple[str, int, int]]:
-    """The super-root's dirents: both flat-path tables, the afid table and uroot."""
+    """Return entries for the flat-path tables, AFID table, and uroot."""
     return [
         ("inode_flat_path_table", c.INODE_FLT_INODE, c.DIRENT_FILE),
         ("apr_flat_path_table", c.APR_FLT_INODE, c.DIRENT_FILE),
@@ -137,6 +216,18 @@ def super_root_dirents() -> list[tuple[str, int, int]]:
 
 @dataclass(slots=True)
 class _DirNode:
+    """A directory's tree links and inode fields during planning.
+
+    Attributes:
+        path: Slash-separated path relative to uroot.
+        name: Final path component.
+        parent: Index of the parent node, or None at the root.
+        subdirs: Child directory indices.
+        files: File indices belonging directly to this directory.
+        inode: Assigned inode number.
+        dirent_offset: Byte offset in the parent directory.
+        nlink: Directory link count.
+    """
     path: str
     name: str
     parent: int | None
@@ -148,6 +239,16 @@ class _DirNode:
 
 
 def _ensure_dir(dirs: list[_DirNode], index: dict[str, int], path: str) -> int:
+    """Find a directory index, creating the directory and ancestors as needed.
+
+    Args:
+        dirs: Mutable directory tree.
+        index: Mutable map from relative paths to directory indices.
+        path: Slash-separated directory path, with an empty root path.
+
+    Returns:
+        Index of the directory in dirs.
+    """
     found = index.get(path)
     if found is not None:
         return found
@@ -164,24 +265,28 @@ def _ensure_dir(dirs: list[_DirNode], index: dict[str, int], path: str) -> int:
 
 
 def _pre_order(dirs: list[_DirNode], start: int, output: list[int]) -> None:
+    """Append directory indices in parent-before-children order."""
     output.append(start)
     for child in dirs[start].subdirs:
         _pre_order(dirs, child, output)
 
 
 def _post_order(dirs: list[_DirNode], start: int, output: list[int]) -> None:
+    """Append directory indices in children-before-parent order."""
     for child in dirs[start].subdirs:
         _post_order(dirs, child, output)
     output.append(start)
 
 
 def _collect_files_pre(dirs: list[_DirNode], start: int, output: list[int]) -> None:
+    """Append file indices while visiting parents before their children."""
     output.extend(dirs[start].files)
     for child in dirs[start].subdirs:
         _collect_files_pre(dirs, child, output)
 
 
 def _is_under(dirs: list[_DirNode], node: int, ancestor: int | None) -> bool:
+    """Check whether a directory equals or descends from an ancestor."""
     if ancestor is None:
         return False
     while True:
@@ -194,14 +299,24 @@ def _is_under(dirs: list[_DirNode], node: int, ancestor: int | None) -> bool:
 
 
 def _file_name(path: str) -> str:
+    """Return the final component of a slash-separated path."""
     return path.rsplit("/", 1)[-1]
 
 
 def _parent_path(path: str) -> str:
+    """Return the parent path, using an empty string for the root."""
     return path.rsplit("/", 1)[0] if "/" in path else ""
 
 
 def _check_case_collisions(paths: Iterable[str]) -> None:
+    """Reject case-insensitive collisions in paths and their ancestors.
+
+    Args:
+        paths: Slash-separated file or directory paths to check.
+
+    Raises:
+        ValueError: Two distinct spellings share the same uppercase path.
+    """
     seen: dict[str, str] = {}
     for path in paths:
         end = len(path)
@@ -226,7 +341,22 @@ def build_tree(
     *,
     spread: bool = False,
 ) -> Plan:
-    """Plan the inner image from ``(path, size)`` pairs and empty directory paths."""
+    """Plan the inner image from file sizes and directory paths.
+
+    Args:
+        files: Pairs of slash-separated relative file path and payload size in
+            bytes.
+        empty_dirs: Empty directories to preserve in the layout.
+        spread: Whether to space file starts and reserve extra room before
+            metadata for the compressed layout.
+
+    Returns:
+        Assigned inodes, file placements, lookup tables, and metadata geometry.
+
+    Raises:
+        ValueError: No files were supplied or distinct paths have the same
+            uppercase spelling.
+    """
     if not files:
         raise ValueError("the source tree has no files")
     planned: list[PlannedFile] = [
@@ -405,6 +535,7 @@ def build_tree(
     at += c.align_up(inode_bytes, c.BLOCK)
 
     def place(byte_count: int) -> tuple[int, int]:
+        """Reserve a block-aligned metadata span and advance the cursor."""
         nonlocal at
         span = (at, byte_count)
         at += c.align_up(byte_count, c.BLOCK)

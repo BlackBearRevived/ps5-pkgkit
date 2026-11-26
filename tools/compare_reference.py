@@ -20,6 +20,14 @@ from ps5_pkgkit import build_package
 
 
 def main() -> int:
+    """Build from command-line paths and compare with a reference package.
+
+    Reuse the reference archive's member timestamp so identical output can be
+    confirmed by its SHA-256 digest.
+
+    Returns:
+        Zero for matching digests or one when the built package differs.
+    """
     source, reference, output = (Path(argument) for argument in sys.argv[1:4])
     data = reference.read_bytes()
     cnt_at = int.from_bytes(data[0x58:0x60], "little")

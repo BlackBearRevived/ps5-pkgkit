@@ -27,21 +27,24 @@ FLAG_EMPTY = 0x20000000
 
 
 def _rotl(value: int, count: int) -> int:
+    """Rotate a 64-bit word left by the given bit count."""
     count &= 63
     return ((value << count) | (value >> (64 - count))) & MASK64
 
 
 def _rotr(value: int, count: int) -> int:
+    """Rotate a 64-bit word right by the given bit count."""
     count &= 63
     return ((value >> count) | (value << (64 - count))) & MASK64
 
 
 def _ascii_upper(data: bytes) -> bytes:
+    """Uppercase ASCII lowercase bytes, preserving all other bytes."""
     return bytes(byte - 32 if 0x61 <= byte <= 0x7A else byte for byte in data)
 
 
 def hash_bytes(data: bytes) -> int:
-    """The raw three-lane sponge over exact bytes."""
+    """Compute the raw three-lane sponge hash of the supplied bytes."""
     s0 = SEED0
     s1 = _rotl(SEED0, 11)
     s2 = _rotl(SEED0, 23)
@@ -74,17 +77,34 @@ def hash_bytes(data: bytes) -> int:
 
 
 def hash_path(path: str) -> int:
-    """The flat-path-table hash of a path: ASCII-uppercased, leading slash stripped."""
+    """Compute a flat-path-table hash from a package path.
+
+    Args:
+        path: Path to normalize by removing one leading slash and uppercasing
+            ASCII characters after UTF-8 encoding.
+
+    Returns:
+        Unsigned 64-bit path hash.
+    """
     if path.startswith("/"):
         path = path[1:]
     return hash_bytes(_ascii_upper(path.encode("utf-8")))
 
 
 def pack_inode_entry(inode: int, is_dir: bool, is_subtree: bool, afid: int) -> int:
-    """Pack an ``inode_flat_path_table`` payload.
+    """Pack an inode flat-path-table payload.
 
-    Inode in the low 24 bits, bit 30 for a directory, bit 31 for a node outside
-    the apr (top-level) set, afid from bit 40.
+    The inode occupies the low 24 bits. Bits 30 and 31 mark a directory and an
+    entry outside the top-level APR set, respectively.
+
+    Args:
+        inode: Inode number.
+        is_dir: Whether the entry represents a directory.
+        is_subtree: Whether the entry is outside the top-level APR set.
+        afid: Application file ID to store for a regular file.
+
+    Returns:
+        Packed inode, flags, and application file ID.
     """
     packed = inode & 0xFF_FFFF
     if is_dir:
@@ -98,12 +118,27 @@ def pack_inode_entry(inode: int, is_dir: bool, is_subtree: bool, afid: int) -> i
 
 
 def pack_apr_entry(uncompressed_size: int, afid: int) -> int:
-    """Pack an ``apr_flat_path_table`` payload: size in the low 40 bits, afid above."""
+    """Pack an APR flat-path-table payload.
+
+    Args:
+        uncompressed_size: File size in bytes, stored in the low 40 bits.
+        afid: Application file ID, stored in the upper 24 bits.
+
+    Returns:
+        Packed file size and application file ID.
+    """
     return (uncompressed_size & 0xFF_FFFF_FFFF) | ((afid & 0xFF_FFFF) << 40)
 
 
 def write(entries: Iterable[tuple[int, int]]) -> bytes:
-    """Serialize a table: the header plus 16-byte ``{hash, packed}`` entries sorted by hash."""
+    """Serialize a flat-path table in ascending hash order.
+
+    Args:
+        entries: Iterable of (path hash, packed payload) pairs.
+
+    Returns:
+        Table header followed by the 16-byte entry records.
+    """
     ordered = sorted(entries, key=lambda entry: entry[0])
     output = bytearray(HEADER_LEN + len(ordered) * ENTRY_LEN)
     output[0:4] = (1).to_bytes(4, "little")

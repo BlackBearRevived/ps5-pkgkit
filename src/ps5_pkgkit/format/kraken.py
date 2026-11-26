@@ -15,6 +15,7 @@ import struct
 
 
 def f32(value: float) -> float:
+    """Round a value to IEEE 754 single precision."""
     return struct.unpack("<f", struct.pack("<f", value))[0]
 
 HALF = 0x20000
@@ -40,14 +41,28 @@ class KrakenError(ValueError):
 
 
 class BitWriter:
+    """A most-significant-bit-first Kraken bitstream writer.
+
+    Attributes:
+        bytes: Buffer containing the completed output bytes.
+        acc: Bit accumulator holding the pending output.
+        n: Number of unflushed bits in the accumulator.
+    """
     __slots__ = ("bytes", "acc", "n")
 
     def __init__(self) -> None:
+        """Initialize an empty bitstream and partial-byte accumulator."""
         self.bytes = bytearray()
         self.acc = 0
         self.n = 0
 
     def put(self, value: int, bits: int) -> None:
+        """Append the low bits of a value in most-significant-bit order.
+
+        Args:
+            value: Integer containing the bits to append.
+            bits: Number of low bits to write.
+        """
         if bits == 0:
             return
         self.acc = ((self.acc << bits) | (value & ((1 << bits) - 1))) & ((1 << 64) - 1)
@@ -57,12 +72,14 @@ class BitWriter:
             self.bytes.append((self.acc >> self.n) & 0xFF)
 
     def finish(self) -> bytes:
+        """Flush the last byte with zero padding and return the stream."""
         if self.n > 0:
             self.bytes.append((self.acc << (8 - self.n)) & 0xFF)
             self.n = 0
         return bytes(self.bytes)
 
     def put_length(self, value: int) -> None:
+        """Append a Kraken extended length code for a nonnegative value."""
         y = value + 64
         bits = y.bit_length()
         self.put(0, bits - 7)
@@ -70,9 +87,27 @@ class BitWriter:
 
 
 class BitReader:
+    """A bounded MSB-first reader for forward or backward streams.
+
+    Attributes:
+        src: Input byte buffer.
+        pos: Byte cursor in the direction of reading.
+        end: Source boundary in that direction.
+        back: Whether bytes are consumed from high to low offsets.
+        bits: Buffered bits, with the next bit at the high end.
+        bitpos: Shift for the next refill byte.
+    """
     __slots__ = ("src", "pos", "end", "back", "bits", "bitpos")
 
     def __init__(self, src: bytes, start: int, end: int, back: bool) -> None:
+        """Set up a bounded bitstream and fill the first read window.
+
+        Args:
+            src: Source buffer.
+            start: Inclusive low byte offset of the stream.
+            end: Exclusive high byte offset of the stream.
+            back: Whether to visit the bytes from high to low offsets.
+        """
         self.src = src
         self.pos = end if back else start
         self.end = start if back else end
@@ -82,6 +117,7 @@ class BitReader:
         self.refill()
 
     def refill(self) -> None:
+        """Refill the read window, using zeroes past the stream boundary."""
         while self.bitpos > 0:
             if self.back:
                 self.pos -= 1
@@ -93,6 +129,14 @@ class BitReader:
             self.bitpos -= 8
 
     def get(self, n: int) -> int:
+        """Consume the next bits and assemble them in reading order.
+
+        Args:
+            n: Number of bits to consume.
+
+        Returns:
+            The decoded unsigned value, or zero for a zero-width read.
+        """
         if n == 0:
             return 0
         value = 0
@@ -108,6 +152,14 @@ class BitReader:
         return value
 
     def get_length(self) -> int:
+        """Decode the next Kraken extended length.
+
+        Returns:
+            Nonnegative length value.
+
+        Raises:
+            KrakenError: The prefix exceeds the supported code length.
+        """
         zeros = 32 - self.bits.bit_length() if self.bits else 32
         if zeros > 12:
             raise KrakenError("kraken: bad length code")
@@ -115,19 +167,34 @@ class BitReader:
         return self.get(zeros + 7) - 64
 
     def seam(self) -> int:
+        """Return the stream boundary offset after accounting for lookahead."""
         pending = (24 - self.bitpos) >> 3
         return self.pos + pending if self.back else self.pos - pending
 
 
 class LsbWriter:
+    """A least-significant-bit-first Huffman stream writer.
+
+    Attributes:
+        bytes: Buffer containing the completed output bytes.
+        acc: Bit accumulator holding the pending output.
+        n: Number of unflushed bits in the accumulator.
+    """
     __slots__ = ("bytes", "acc", "n")
 
     def __init__(self) -> None:
+        """Initialize an empty Huffman stream and bit accumulator."""
         self.bytes = bytearray()
         self.acc = 0
         self.n = 0
 
     def put(self, value: int, bits: int) -> None:
+        """Append a code to the Huffman bitstream.
+
+        Args:
+            value: Reversed code fitting within the specified bit width.
+            bits: Number of bits to append.
+        """
         self.acc |= value << self.n
         self.n += bits
         while self.n >= 8:
@@ -136,15 +203,35 @@ class LsbWriter:
             self.n -= 8
 
     def finish(self) -> bytes:
+        """Return the stream with the last partial byte zero-padded."""
         if self.n > 0:
             self.bytes.append(self.acc & 0xFF)
         return bytes(self.bytes)
 
 
 class LsbReader:
+    """An LSB-first Huffman stream reader for either direction.
+
+    Attributes:
+        src: Input byte buffer.
+        next: Byte cursor for the next refill.
+        left: Number of available source bytes before the boundary.
+        back: Whether bytes are consumed from high to low offsets.
+        acc: Buffered bits, with the next bit at the low end.
+        n: Number of buffered bits.
+        used: Total number of bits consumed by skip().
+    """
     __slots__ = ("src", "next", "left", "back", "acc", "n", "used")
 
     def __init__(self, src: bytes, start: int, end: int, back: bool) -> None:
+        """Set up a bounded Huffman stream for forward or reverse reads.
+
+        Args:
+            src: Source buffer.
+            start: Inclusive low byte offset of the stream.
+            end: Exclusive high byte offset of the stream.
+            back: Whether to visit the bytes from high to low offsets.
+        """
         self.src = src
         self.next = end if back else start
         self.left = end - start
@@ -154,6 +241,7 @@ class LsbReader:
         self.used = 0
 
     def peek(self) -> int:
+        """Look ahead at the next 11 bits, padding the end with zeroes."""
         while self.n < MAX_LEN:
             if self.left == 0:
                 byte = 0
@@ -170,11 +258,13 @@ class LsbReader:
         return self.acc & (LUT - 1)
 
     def skip(self, bits: int) -> None:
+        """Consume bits already available in the lookahead window."""
         self.acc >>= bits
         self.n -= bits
         self.used += bits
 
     def bytes_used(self) -> int:
+        """Return consumed bits rounded up to a whole byte count."""
         return (self.used + 7) // 8
 
 
@@ -182,6 +272,7 @@ class LsbReader:
 
 
 def _huffman_lengths(freq: list[int]) -> list[int]:
+    """Compute code lengths from a 256-symbol frequency table."""
     parent: list[int] = []
     leaf = [-1] * 256
     heap: list[tuple[int, int]] = []
@@ -211,6 +302,14 @@ def _huffman_lengths(freq: list[int]) -> list[int]:
 
 
 def code_lengths(freq: list[int]) -> list[int]:
+    """Compute Huffman lengths within Kraken's 11-bit limit.
+
+    Args:
+        freq: Frequency table with one entry per byte value.
+
+    Returns:
+        Code lengths in byte-value order. Zero denotes an unused symbol.
+    """
     values = list(freq)
     while True:
         lengths = _huffman_lengths(values)
@@ -220,6 +319,17 @@ def code_lengths(freq: list[int]) -> list[int]:
 
 
 def _canonical(lengths: list[int]) -> list[tuple[int, int]]:
+    """Assign reversed canonical Huffman codes to byte values.
+
+    Args:
+        lengths: 256 code lengths indexed by byte value.
+
+    Returns:
+        Pairs of reversed code and bit width for each byte value.
+
+    Raises:
+        ValueError: The lengths do not fill the code space.
+    """
     codes = [(0, 0)] * 256
     slot = 0
     for length in range(1, MAX_LEN + 1):
@@ -235,6 +345,7 @@ def _canonical(lengths: list[int]) -> list[tuple[int, int]]:
 
 
 def _gamma(w: BitWriter, run: int) -> None:
+    """Append a gamma-coded run length to the table stream."""
     value = run + 1
     bits = value.bit_length()
     w.put(0, bits - 2)
@@ -242,6 +353,15 @@ def _gamma(w: BitWriter, run: int) -> None:
 
 
 def _table(lengths: list[int], forced_bits: int) -> bytes | None:
+    """Encode a Huffman length table with one remainder width.
+
+    Args:
+        lengths: Code lengths indexed by byte value.
+        forced_bits: Remainder width in bits, from zero through three.
+
+    Returns:
+        Packed table bytes, or None when a length delta exceeds the encoding.
+    """
     writer = BitWriter()
     writer.put(0, 1)
     writer.put(1, 1)
@@ -281,6 +401,15 @@ def _table(lengths: list[int], forced_bits: int) -> bytes | None:
 
 
 def huff_encode(data: bytes) -> bytes | None:
+    """Encode bytes as a Kraken type-2 Huffman payload.
+
+    Args:
+        data: Uncompressed array contents.
+
+    Returns:
+        The Huffman table and bitstreams without an array header, or None if the
+        input size or encoded streams exceed the format limits.
+    """
     if len(data) < MIN_ARRAY or len(data) > 0x40000:
         return None
     freq = [0] * 256
@@ -305,6 +434,17 @@ def huff_encode(data: bytes) -> bytes | None:
 
 
 def _get_gamma(reader: BitReader) -> int:
+    """Read a Huffman table run length from the bitstream.
+
+    Args:
+        reader: Reader positioned at the run code.
+
+    Returns:
+        Decoded run length.
+
+    Raises:
+        KrakenError: The run prefix is too long.
+    """
     bits = reader.bits & 0xFFFFFFFF
     leading = 32 - bits.bit_length() if bits else 32
     if leading > 7:
@@ -313,6 +453,18 @@ def _get_gamma(reader: BitReader) -> int:
 
 
 def huff_decode(src: bytes, count: int) -> bytes:
+    """Decode a Kraken type-2 Huffman payload.
+
+    Args:
+        src: Table and bitstreams, excluding the array header.
+        count: Number of output bytes declared by the array header.
+
+    Returns:
+        The decoded array bytes.
+
+    Raises:
+        KrakenError: The table or bitstreams are malformed or unsupported.
+    """
     reader = BitReader(src, 0, len(src), False)
     if reader.get(1) != 0:
         raise KrakenError("kraken: unsupported Huffman table form")
@@ -403,6 +555,7 @@ def huff_decode(src: bytes, count: int) -> bytes:
 
 
 def _reverse11(value: int) -> int:
+    """Reverse the low 11 bits of an integer."""
     result = 0
     for _ in range(11):
         result = (result << 1) | (value & 1)
@@ -414,12 +567,24 @@ def _reverse11(value: int) -> int:
 
 
 def put_raw_array(out: bytearray, data: bytes) -> None:
+    """Append an uncompressed array with a Kraken length header.
+
+    Args:
+        out: Output buffer to extend in place.
+        data: Bytes to store in the array.
+    """
     size = len(data)
     out += bytes([(size >> 16) & 0xFF, (size >> 8) & 0xFF, size & 0xFF])
     out += data
 
 
 def put_array(out: bytearray, data: bytes) -> None:
+    """Append a Kraken array, using Huffman coding when smaller.
+
+    Args:
+        out: Output buffer to extend in place.
+        data: Bytes to encode.
+    """
     body = huff_encode(data)
     if body is not None and len(body) + 5 < len(data) + 3:
         d = len(data) - 1
@@ -431,6 +596,20 @@ def put_array(out: bytearray, data: bytes) -> None:
 
 
 def get_array(src: bytes, at: int, end: int, maximum: int) -> tuple[bytes, int]:
+    """Decode a bounded raw or Huffman-coded Kraken array.
+
+    Args:
+        src: Source buffer.
+        at: Starting byte offset of the array.
+        end: Exclusive byte boundary of the enclosing chunk.
+        maximum: Maximum allowed decoded byte count.
+
+    Returns:
+        Decoded bytes and encoded bytes consumed, including the header.
+
+    Raises:
+        KrakenError: The array is unsupported, truncated, or exceeds its bounds.
+    """
     if end < at + 2:
         raise KrakenError("kraken: truncated array")
     first = src[at]
@@ -472,6 +651,17 @@ def get_array(src: bytes, at: int, end: int, maximum: int) -> tuple[bytes, int]:
 
 
 def traditional_offset(distance: int) -> tuple[int, int, int]:
+    """Encode a match distance with the traditional Kraken offset code.
+
+    Args:
+        distance: Positive backward match distance in bytes.
+
+    Returns:
+        The offset code byte, extra bits, and extra bit count.
+
+    Raises:
+        ValueError: The distance is outside the traditional code's range.
+    """
     t = distance + 248
     low = t & 0xF
     high = t >> 4
@@ -486,6 +676,15 @@ def traditional_offset(distance: int) -> tuple[int, int, int]:
 
 def _put_literals(out: bytearray, dst: int, literals: bytes, delta: bool,
                   last: int) -> None:
+    """Copy raw or delta-decoded literals into the output buffer.
+
+    Args:
+        out: Destination buffer containing previously decoded bytes.
+        dst: Byte offset at which to write the literals.
+        literals: Encoded literal bytes.
+        delta: Whether the bytes are differences from prior output.
+        last: Backward reference distance for delta literals.
+    """
     if delta:
         for index, literal in enumerate(literals):
             out[dst + index] = (literal + out[dst + index - last]) & 0xFF
@@ -495,6 +694,18 @@ def _put_literals(out: bytearray, dst: int, literals: bytes, delta: bool,
 
 def decode_half(src: bytes, out: bytearray, at: int, length: int,
                 delta: bool) -> None:
+    """Decode one LZ-coded half into the supplied output buffer.
+
+    Args:
+        src: Encoded half payload.
+        out: Mutable block output, including preceding bytes for backreferences.
+        at: Starting byte offset of the half within the block.
+        length: Expected decoded length of the half.
+        delta: Whether to decode literals as differences from prior output.
+
+    Raises:
+        KrakenError: Framing, offsets, lengths, or the decoded span are invalid.
+    """
     end = at + length
     p = 0
     dst = at
@@ -560,6 +771,7 @@ def decode_half(src: bytes, out: bytearray, at: int, length: int,
     length_iter = iter(raw_lens)
 
     def length_value(raw: int) -> int:
+        """Expand an escaped length using the excess stream."""
         return 3 + (255 + next(escape_iter) if raw == 255 else raw)
 
     offset_iter = iter(offsets)
@@ -604,19 +816,40 @@ def decode_half(src: bytes, out: bytearray, at: int, length: int,
 
 @dataclass(slots=True)
 class Half:
+    """The encoding mode and payload of a Kraken half-block.
+
+    Attributes:
+        kind: Payload mode: raw, lz, delta, or entropy.
+        data: Stored payload bytes for the half.
+    """
     kind: str  # raw, lz, delta, entropy
     data: bytes
 
     @property
     def is_lz(self) -> bool:
+        """Whether the half uses LZ commands, with raw or delta literals."""
         return self.kind in ("lz", "delta")
 
     @property
     def is_delta(self) -> bool:
+        """Whether the half uses delta-coded literals."""
         return self.kind == "delta"
 
 
 def decode_block(halves: list[Half], length: int) -> bytes:
+    """Decode the halves of a Kraken block in order.
+
+    Args:
+        halves: Stored halves, including each half's encoding mode.
+        length: Expected total uncompressed length in bytes.
+
+    Returns:
+        The reconstructed block.
+
+    Raises:
+        KrakenError: A half is malformed, has an unknown mode, or fails to fill
+            the declared block length.
+    """
     out = bytearray(length)
     at = 0
     for half in halves:
@@ -647,6 +880,17 @@ LEVEL_PASSES = {"fast": 0, "balanced": 2, "smallest": 3, "stored": 0}
 
 
 def match_len(buf: bytes, candidate: int, at: int, limit: int) -> int:
+    """Measure the number of matching bytes at two input positions.
+
+    Args:
+        buf: Input buffer containing the candidate and current position.
+        candidate: Earlier byte position to compare against.
+        at: Current byte position.
+        limit: Exclusive bound on the current position's match.
+
+    Returns:
+        Number of equal bytes from the two positions.
+    """
     length = 0
     while at + length + 8 <= limit:
         a = int.from_bytes(buf[candidate + length:candidate + length + 8], "little")
@@ -661,6 +905,16 @@ def match_len(buf: bytes, candidate: int, at: int, limit: int) -> int:
 
 
 def gain(length: int, distance: int, recent: bool) -> int:
+    """Estimate bits saved by a match instead of literal bytes.
+
+    Args:
+        length: Match length in bytes.
+        distance: Backward distance in bytes.
+        recent: Whether the distance is already in the recent-offset cache.
+
+    Returns:
+        Estimated savings in bits.
+    """
     cost = 7
     if length > 16:
         cost += 8
@@ -670,25 +924,58 @@ def gain(length: int, distance: int, recent: bool) -> int:
 
 
 class Matcher:
+    """A hash-chain index for bounded Kraken match searches.
+
+    Attributes:
+        head: Latest indexed byte position for each hash bucket.
+        prev: Previous position in the same bucket for each indexed byte.
+        chain: Maximum number of positions to check per search.
+    """
     __slots__ = ("head", "prev", "chain")
 
     def __init__(self, length: int, level: str) -> None:
+        """Allocate the match chains for one input block.
+
+        Args:
+            length: Number of byte positions to index.
+            level: Compression preset controlling the chain search limit.
+
+        Raises:
+            KeyError: The compression preset is unknown.
+        """
         self.head = [-1] * (1 << HASH_BITS)
         self.prev = [-1] * length
         self.chain = LEVEL_CHAIN[level]
 
     @staticmethod
     def hash(buf: bytes, at: int) -> int:
+        """Hash the four bytes starting at an input position."""
         value = int.from_bytes(buf[at:at + 4], "little")
         return ((value * 0x9E3779B1) & 0xFFFFFFFF) >> (32 - HASH_BITS)
 
     def insert(self, buf: bytes, at: int) -> None:
+        """Index a position if at least four input bytes remain.
+
+        Args:
+            buf: Input block containing the position.
+            at: Byte position to add to the match chains.
+        """
         if at + 4 <= len(buf):
             index = self.hash(buf, at)
             self.prev[at] = self.head[index]
             self.head[index] = at
 
     def best(self, buf: bytes, at: int, limit: int) -> tuple[int, int]:
+        """Find the longest indexed match within the search budget.
+
+        Args:
+            buf: Input block containing the current and previous positions.
+            at: Current byte position.
+            limit: Exclusive end of the region to match.
+
+        Returns:
+            A (length, distance) pair, or (0, 0) if no match was found.
+        """
         best = (0, 0)
         if at + 4 > limit:
             return best
@@ -712,6 +999,14 @@ class Matcher:
 
     def candidates(self, buf: bytes, at: int, limit: int,
                    output: list[tuple[int, int]]) -> None:
+        """Append successively longer indexed matches.
+
+        Args:
+            buf: Input block containing the current and previous positions.
+            at: Current byte position.
+            limit: Exclusive end of the region to match.
+            output: List extended in place with (length, distance) pairs.
+        """
         if at + 4 > limit:
             return
         longest = MIN_MATCH - 1
@@ -736,6 +1031,19 @@ class Matcher:
 
 def _choose(buf: bytes, at: int, limit: int, recent: list[int],
             hashed: tuple[int, int]) -> tuple[int, int, int]:
+    """Choose the largest estimated saving among cached and indexed matches.
+
+    Args:
+        buf: Input block.
+        at: Current byte position.
+        limit: Exclusive end of the region to match.
+        recent: Recently used match distances.
+        hashed: Best indexed (length, distance) pair.
+
+    Returns:
+        Estimated bit savings, match length, and distance, or three zeroes when
+        no match saves bits.
+    """
     best = (0, 0, 0)
     for distance in recent:
         if distance <= at:
@@ -754,12 +1062,20 @@ def _choose(buf: bytes, at: int, limit: int, recent: list[int],
 
 @dataclass(slots=True)
 class Cmd:
+    """One literal run followed by a backward match.
+
+    Attributes:
+        lit: Number of literal bytes before the match.
+        length: Match length in bytes.
+        dist: Backward reference distance in bytes.
+    """
     lit: int
     length: int
     dist: int
 
 
 def _remember(recent: list[int], distance: int) -> None:
+    """Move a distance to the front of the three-entry cache in place."""
     if distance in recent:
         kind = recent.index(distance)
         for slot in range(kind, 0, -1):
@@ -770,6 +1086,17 @@ def _remember(recent: list[int], distance: int) -> None:
 
 
 def parse_lazy(buf: bytes, start: int, end: int, matcher: Matcher) -> list[Cmd]:
+    """Find matches while comparing each choice with the next byte.
+
+    Args:
+        buf: Input block with any preceding history.
+        start: First byte to parse, after any seed.
+        end: Exclusive end of the half.
+        matcher: Match index to extend as input positions are visited.
+
+    Returns:
+        Commands in input order, with trailing literals left implicit.
+    """
     commands: list[Cmd] = []
     recent = [8, 8, 8]
     anchor = start
@@ -777,6 +1104,7 @@ def parse_lazy(buf: bytes, start: int, end: int, matcher: Matcher) -> list[Cmd]:
     inserted = start
 
     def longest(position: int) -> tuple[int, int]:
+        """Index pending positions and find the best match at this byte."""
         nonlocal inserted
         while inserted < position:
             matcher.insert(buf, inserted)
@@ -804,6 +1132,17 @@ def parse_lazy(buf: bytes, start: int, end: int, matcher: Matcher) -> list[Cmd]:
 
 @dataclass(slots=True)
 class Streams:
+    """Arrays and bit fields produced from a command parse.
+
+    Attributes:
+        literals: Unmodified literal bytes.
+        delta_literals: Literal differences from prior bytes.
+        commands: Packed literal, length, and offset selectors.
+        offset_codes: Code bytes for distances outside the recent cache.
+        offset_bits: Extra offset values paired with their bit widths.
+        lengths: Length codes stored outside commands.
+        escapes: Values for lengths that exceed a one-byte code.
+    """
     literals: bytearray
     delta_literals: bytearray
     commands: bytearray
@@ -814,11 +1153,23 @@ class Streams:
 
 
 def streams(buf: bytes, start: int, end: int, commands: list[Cmd]) -> Streams:
+    """Split a command sequence into the Kraken coding streams.
+
+    Args:
+        buf: Input block containing the parsed bytes and match history.
+        start: Start of the parsed region after any seed.
+        end: Exclusive end of the parsed region.
+        commands: Commands in input order.
+
+    Returns:
+        Both literal modes, command bytes, and offset and length streams.
+    """
     result = Streams(bytearray(), bytearray(), bytearray(), bytearray(), [],
                      bytearray(), [])
     recent = [8, 8, 8]
 
     def push_length(value: int) -> None:
+        """Pack a length into its byte code and optional escape."""
         p = value - 3
         if p < 255:
             result.lengths.append(p)
@@ -858,7 +1209,16 @@ def streams(buf: bytes, start: int, end: int, commands: list[Cmd]) -> Streams:
 
 
 def coded_size(s: Streams) -> int:
+    """Estimate the total encoded stream size in bytes.
+
+    Args:
+        s: Command, literal, length, and offset streams.
+
+    Returns:
+        Estimated size using the smaller of the two literal modes.
+    """
     def array(data: bytes) -> int:
+        """Measure a serialized array, including its header."""
         out = bytearray()
         put_array(out, data)
         return len(out)
@@ -870,6 +1230,7 @@ def coded_size(s: Streams) -> int:
 
 
 def _symbol_bits(data: bytes, default: float) -> list[float]:
+    """Estimate a bit cost for each possible byte value."""
     if not data:
         return [default] * 256
     if len(data) < MIN_ARRAY:
@@ -884,6 +1245,15 @@ def _symbol_bits(data: bytes, default: float) -> list[float]:
 
 @dataclass(slots=True)
 class Costs:
+    """Per-symbol estimates used to price candidate matches.
+
+    Attributes:
+        lit: Bit costs for symbols in the selected literal mode.
+        cmd: Bit costs for packed command symbols.
+        offs: Bit costs for distance code symbols.
+        lens: Bit costs for length code symbols.
+        delta: Whether the literal cost table describes delta literals.
+    """
     lit: list[float]
     cmd: list[float]
     offs: list[float]
@@ -892,6 +1262,14 @@ class Costs:
 
     @classmethod
     def measured(cls, s: Streams) -> "Costs":
+        """Estimate symbol costs and select the cheaper literal mode.
+
+        Args:
+            s: Streams from an existing parse of the half.
+
+        Returns:
+            Estimated literal, command, offset, and length costs.
+        """
         raw = _symbol_bits(bytes(s.literals), 8.0)
         sub = _symbol_bits(bytes(s.delta_literals), 8.0)
         raw_sum = 0.0
@@ -906,12 +1284,23 @@ class Costs:
                    _symbol_bits(bytes(s.lengths), 6.0), delta)
 
     def len_value(self, value: int) -> float:
+        """Estimate the bit cost of a length code and its optional escape."""
         if value < 255:
             return self.lens[value]
         scaled = f32(self.lens[255] + f32(2.0 * f32((value - 255 + 64).bit_length())))
         return f32(scaled - 7.0)
 
     def matched(self, run: int, length: int, kind: int) -> float:
+        """Estimate the command and length-code cost of a match.
+
+        Args:
+            run: Pending literal count.
+            length: Match length in bytes.
+            kind: Offset selector, from zero through three.
+
+        Returns:
+            Estimated bit cost excluding literal bytes and extra offset bits.
+        """
         literal_code = min(run, 3)
         length_code = min(length - 2, 15)
         bits = self.cmd[(kind << 6) | (length_code << 2) | literal_code]
@@ -923,6 +1312,15 @@ class Costs:
 
 
 def priced_lengths(lo: int, length: int):
+    """Select candidate lengths worth evaluating for a match.
+
+    Args:
+        lo: Minimum allowed match length.
+        length: Longest known match length.
+
+    Yields:
+        Each short candidate and the full match length when allowed.
+    """
     short_end = lo if length >= NICE_LEN else min(length, SHORT_CUTS) + 1
     yield from range(lo, short_end)
     if length >= lo and length >= short_end:
@@ -931,6 +1329,18 @@ def priced_lengths(lo: int, length: int):
 
 def all_candidates(buf: bytes, start: int, end: int,
                    matcher: Matcher) -> tuple[list[int], list[tuple[int, int]]]:
+    """Collect and index match candidates for a half-block.
+
+    Args:
+        buf: Input block including any preceding history.
+        start: First byte position to index.
+        end: Exclusive end of the half.
+        matcher: Match index to extend as the half is scanned.
+
+    Returns:
+        Candidate-list offsets for each position and a flat list of (length,
+        distance) pairs. The offsets include a final sentinel.
+    """
     starts = []
     all_found: list[tuple[int, int]] = []
     found: list[tuple[int, int]] = []
@@ -951,6 +1361,15 @@ def all_candidates(buf: bytes, start: int, end: int,
 
 @dataclass(slots=True)
 class Node:
+    """The cheapest known parse state at a byte position.
+
+    Attributes:
+        cost: Estimated cumulative bit cost.
+        length: Length of the arriving match, or zero for a literal step.
+        dist: Backward distance of the arriving match.
+        recent: Recent match distances after this step.
+        run: Number of pending literals.
+    """
     cost: float
     length: int
     dist: int
@@ -961,6 +1380,18 @@ class Node:
 def parse_optimal(buf: bytes, start: int, end: int,
                   candidates: tuple[list[int], list[tuple[int, int]]],
                   costs: Costs) -> list[Cmd]:
+    """Search for a low-cost command sequence using measured costs.
+
+    Args:
+        buf: Input block including any preceding history.
+        start: First byte to parse.
+        end: Exclusive end of the half.
+        candidates: Per-position offsets and flattened candidate matches.
+        costs: Symbol cost estimates and literal mode.
+
+    Returns:
+        Commands in input order, with trailing literals left implicit.
+    """
     n = end - start
     nodes = [Node(float("inf"), 0, 0, [8, 8, 8], 0) for _ in range(n + 1)]
     nodes[0].cost = 0.0
@@ -978,6 +1409,7 @@ def parse_optimal(buf: bytes, start: int, end: int,
         run = node.run
 
         def relax(length: int, distance: int, bits: float, recent: list[int]) -> None:
+            """Record a cheaper match for the target state."""
             value = f32(node.cost + bits)
             target = nodes[i + length]
             if value < target.cost:
@@ -1027,6 +1459,20 @@ def parse_optimal(buf: bytes, start: int, end: int,
 
 def encode_half(buf: bytes, start: int, end: int, seed: bool, matcher: Matcher,
                 level: str) -> tuple[bytes, bool] | None:
+    """Try to encode one half-block with Kraken LZ coding.
+
+    Args:
+        buf: Input block, including preceding bytes available as history.
+        start: First byte of the half.
+        end: Exclusive byte boundary of the half.
+        seed: Whether the half starts with a literal seed.
+        matcher: Match index for the block and any preceding history.
+        level: Compression preset controlling the number of parse passes.
+
+    Returns:
+        Encoded bytes and a delta-literal flag, or None when the half should be
+        stored raw.
+    """
     data_start = start + SEED if seed else start
     if end < data_start + 16:
         return None
@@ -1096,12 +1542,25 @@ def encode_half(buf: bytes, start: int, end: int, seed: bool, matcher: Matcher,
 def parse_lazy_from_candidates(buf: bytes, start: int, end: int,
                                starts: list[int],
                                all_found: list[tuple[int, int]]) -> list[Cmd]:
+    """Choose lazy matches from an existing candidate index.
+
+    Args:
+        buf: Input block including any preceding history.
+        start: First byte to parse.
+        end: Exclusive end of the half.
+        starts: Offsets into the flat candidate list for each position.
+        all_found: Flattened (length, distance) candidates.
+
+    Returns:
+        Commands in input order, with trailing literals left implicit.
+    """
     commands = []
     recent = [8, 8, 8]
     anchor = start
     at = start
 
     def longest(position: int) -> tuple[int, int]:
+        """Return the longest indexed match at this byte position."""
         index = position - start
         chunk = all_found[starts[index]:starts[index + 1]]
         return chunk[-1] if chunk else (0, 0)
@@ -1126,6 +1585,19 @@ def parse_lazy_from_candidates(buf: bytes, start: int, end: int,
 
 
 def encode_block_at(block: bytes, level: str = "balanced") -> list[Half]:
+    """Encode a block as one or two Kraken halves at the given level.
+
+    Args:
+        block: Input bytes, from one byte through 256 KiB.
+        level: Compression preset: fast, balanced, smallest, or stored.
+
+    Returns:
+        Stored halves in order, with raw fallback when LZ coding does not help.
+
+    Raises:
+        ValueError: The block length is outside the supported range.
+        KeyError: The compression preset is unknown.
+    """
     if not block or len(block) > BLOCK:
         raise ValueError("a Kraken block is 1..256 KiB")
     matcher = Matcher(len(block), level)
@@ -1142,10 +1614,22 @@ def encode_block_at(block: bytes, level: str = "balanced") -> list[Half]:
 
 
 def _half_from(encoded: tuple[bytes, bool] | None, raw: bytes) -> Half:
+    """Wrap an encoded half, using the raw bytes if encoding was skipped."""
     if encoded is None:
         return Half("raw", raw)
     return Half("delta" if encoded[1] else "lz", encoded[0])
 
 
 def encode_block(block: bytes) -> list[Half]:
+    """Encode a Kraken block with the balanced compression preset.
+
+    Args:
+        block: Input bytes, from one byte through 256 KiB.
+
+    Returns:
+        One or two encoded or raw halves in order.
+
+    Raises:
+        ValueError: The block length is outside the supported range.
+    """
     return encode_block_at(block, "balanced")
