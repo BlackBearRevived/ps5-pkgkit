@@ -1,27 +1,80 @@
-# ps5-pkg
+# PS5 PKG
 
-A Python library and command-line tool for validating staged PS5 application folders and offline verification of existing packages. The first tested inputs are the Hello World folder and reference package from the native boilerplate.
+Build, inspect and verify PlayStation 5 homebrew packages from staged title folders, in pure Python.
 
-Install from a checkout with Python 3.11 or newer.
+[![Build](https://github.com/BlackBearRevived/ps5-pkg/actions/workflows/ci.yml/badge.svg)](https://github.com/BlackBearRevived/ps5-pkg/actions/workflows/ci.yml)
+[![Latest release](https://img.shields.io/github/v/release/BlackBearRevived/ps5-pkg)](https://github.com/BlackBearRevived/ps5-pkg/releases/latest)
+[![License: GPL v3+](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)](LICENSE)
 
-```sh
-python -m pip install .
-uv tool install .
+The first tested inputs are the Hello World folder and reference package from the native boilerplate. The build runs on Windows, Linux and macOS with Python 3.11 or newer and needs nothing beyond the standard library.
+
+## Install or run
+
+### Run once with uvx
+
+```bash
+uvx --from "https://github.com/BlackBearRevived/ps5-pkg/releases/download/v0.1.0/ps5_pkg-0.1.0-py3-none-any.whl" ps5-pkg --help
 ```
 
+### Install with uv
+
+```bash
+uv tool install "https://github.com/BlackBearRevived/ps5-pkg/releases/download/v0.1.0/ps5_pkg-0.1.0-py3-none-any.whl"
+ps5-pkg build dist/PPSA99771 -o HelloWorld.pkg
+```
+
+### Install with pip
+
+Create a virtual environment with `python -m venv .venv`, activate it (`.venv\Scripts\Activate.ps1` on Windows, `source .venv/bin/activate` elsewhere), then:
+
+```bash
+python -m pip install "https://github.com/BlackBearRevived/ps5-pkg/releases/download/v0.1.0/ps5_pkg-0.1.0-py3-none-any.whl"
+ps5-pkg build dist/PPSA99771 -o HelloWorld.pkg
+```
+
+To install from a local checkout, use `python -m pip install .`
+
+### Download and run the zipapp
+
+Download `ps5-pkg.pyz` and `SHA256SUMS.txt` from the [latest release](https://github.com/BlackBearRevived/ps5-pkg/releases/latest), verify them (below), then run:
+
+```bash
+python ps5-pkg.pyz build dist/PPSA99771 -o HelloWorld.pkg
+```
+
+From a clone of this repository, `./ps5pkg.py` does the same, as does `python -m ps5_pkg` once installed.
+
+### Verify a release
+
+```bash
+sha256sum -c SHA256SUMS.txt
+gh attestation verify ps5_pkg-0.1.0-py3-none-any.whl --repo BlackBearRevived/ps5-pkg
+```
+
+## Usage
+
 ```sh
+ps5-pkg build dist/PPSA99771 -o HelloWorld.pkg
 ps5-pkg inspect-source dist/PPSA99771
 ps5-pkg inspect-source dist/PPSA99771 --json
 ps5-pkg verify HelloWorld.pkg
 ps5-pkg verify HelloWorld.pkg --sha256 "$EXPECTED_SHA256" --json
 ```
 
+`build` writes a package in the measured debug-package template: the finalized-image header, the outer PFS image, the content container and the install-metadata ZIP. Executables that some dumpers leave malformed are repaired, `param.json` is rewritten (DRM, launch fields, content id, size class) without touching the source, the container carries the presentation assets, the debug license, the PlayGo tables and the scenario, and the result is verified before it replaces the destination.
+
+The inner image is Kraken-compressed by default, with the Python encoder and the block layout descriptor the console's decoder expects. On the recorded Hello World folder this reproduces the reference builder's package byte for byte (same SHA-256), including the reference's build timestamp when `build_package(timestamp=...)` is given one. `--stored` keeps the image uncompressed instead; `--level fast|balanced|smallest` trades compression time for size.
+
+Options: `--content-id` overrides the id from `param.json`, `--firmware 5.10` sets `requiredSystemSoftwareVersion`, and `--language` narrows the PlayGo scenario. Python applications can call `ps5_pkg.build_package(source, output, ...)` and catch `ps5_pkg.BuildError`.
+
 `inspect-source` checks the base-app identity and source paths, then hashes each file. Its `manifest_sha256` is the SHA-256 of sorted `sha256  ./relative/path` lines. It reads the folder without modifying it. Python applications can call `ps5_pkg.inspect_source(path)` and catch `ps5_pkg.SourceError`.
 
 The verifier checks the finalized-image and content-container structure, the container header and body checksums, and the title metadata. It reports the whole-file SHA-256. Supply a digest from a trusted source to check every byte of the file, including the filesystem image. These are integrity checks. Console installation and launch are separate hardware results.
 
-Python applications can call `ps5_pkg.verify_package(path, expected_sha256=...)` and catch `ps5_pkg.VerificationError` for invalid packages. The CLI returns exit status 1 for an inspection or verification failure and 2 for a usage error.
+Python applications can call `ps5_pkg.verify_package(path, expected_sha256=...)` and catch `ps5_pkg.VerificationError` for invalid packages. The CLI returns exit status 1 for a build, inspection or verification failure and 2 for a usage error.
 
-Package creation remains pending. The tested reference package uses a patched authentication path, so this CLI does not write a console-installable `.pkg`.
+The build leaves no output behind on failure: it writes a `.partial` file, verifies it, and only then renames it.
 
-See the [reference hardware record](docs/HELLO_WORLD_BASELINE.md) and the [implementation plan](IMPLEMENTATION_PLAN.md).
+Kraken compression is written for fidelity, not speed: the Hello World image (5.9 MB of logical data) takes about half a minute, and a large title would take much longer in CPython. `--stored` skips it.
+
+See the [reference hardware record](docs/HELLO_WORLD_BASELINE.md), the [implementation plan](IMPLEMENTATION_PLAN.md), and the [third-party notices](THIRD_PARTY_NOTICES.md).

@@ -1,16 +1,34 @@
+# PS5 PKG - Python package metadata.
+# Copyright (C) 2026 BlackBearReloaded
+# SPDX-License-Identifier: GPL-3.0-or-later
+
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "ps5-pkg"
-version = "0.1.0.dev0"
-description = "Inspect staged PS5 applications and verify existing packages offline."
+dynamic = ["version"]
+description = "Build, inspect and verify PS5 homebrew packages in pure Python."
 readme = "README.md"
 requires-python = ">=3.11"
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
+classifiers = [
+    "Environment :: Console",
+    "Programming Language :: Python :: 3",
+    "Topic :: System :: Archiving :: Packaging",
+]
 
 [project.scripts]
 ps5-pkg = "ps5_pkg.cli:main"
 
+[project.urls]
+Repository = "https://github.com/BlackBearRevived/ps5-pkg"
+Issues = "https://github.com/BlackBearRevived/ps5-pkg/issues"
+
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.dynamic]
+version = {attr = "ps5_pkg.__version__"}

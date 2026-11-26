@@ -1,0 +1,174 @@
+# PS5 PKG - Test, package, attest, and publish.
+# Copyright (C) 2026 BlackBearReloaded
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest, macos-latest]
+        python: ["3.11", "3.x"]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install ps5-pkg
+        run: python -m pip install .
+      - name: Unit tests
+        run: python -m unittest discover -s tests -v
+      - name: Build and verify a package
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import pathlib
+          root = pathlib.Path("smoke/PPSA99999")
+          (root / "sce_sys").mkdir(parents=True)
+          (root / "eboot.bin").write_bytes(b"\x7fELF" + bytes(60))
+          (root / "sce_sys/param.json").write_text(json.dumps({
+              "titleId": "PPSA99999",
+              "contentId": "UP0000-PPSA99999_00-TESTPACKAGE00000",
+              "contentVersion": "01.000.000",
+              "applicationCategoryType": 0,
+              "applicationDrmType": "free",
+          }))
+          PY
+          ps5-pkg build smoke/PPSA99999 -o smoke.pkg --stored
+          ps5-pkg verify smoke.pkg
+
+  package:
+    needs: test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.x"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Build and check the wheel and source distribution
+        run: |
+          python -m pip install build twine
+          version=$(python -c 'from ps5_pkg import __version__; print(__version__)')
+          if [[ $GITHUB_REF_TYPE == tag && $GITHUB_REF_NAME != "v$version" ]]; then
+            echo "Tag $GITHUB_REF_NAME does not match package version $version" >&2
+            exit 2
+          fi
+          python -m build
+          python -m twine check --strict dist/*.whl dist/*.tar.gz
+      - name: Test both installable packages outside the checkout
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import pathlib
+          root = pathlib.Path("smoke/PPSA99999")
+          (root / "sce_sys").mkdir(parents=True)
+          (root / "eboot.bin").write_bytes(b"\x7fELF" + bytes(60))
+          (root / "sce_sys/param.json").write_text(json.dumps({
+              "titleId": "PPSA99999",
+              "contentId": "UP0000-PPSA99999_00-TESTPACKAGE00000",
+              "contentVersion": "01.000.000",
+              "applicationCategoryType": 0,
+              "applicationDrmType": "free",
+          }))
+          PY
+          for package in "$PWD"/dist/*.whl "$PWD"/dist/*.tar.gz; do
+            work=$(mktemp -d "$RUNNER_TEMP/pkg-install.XXXXXX")
+            python -m venv "$work/venv"
+            "$work/venv/bin/python" -m pip install "$package"
+            "$work/venv/bin/python" -m pip check
+            (cd "$work" && ./venv/bin/ps5-pkg --version 2>/dev/null || ./venv/bin/ps5-pkg --help &&
+              ./venv/bin/ps5-pkg build "$GITHUB_WORKSPACE/smoke/PPSA99999" -o smoke.pkg --stored &&
+              ./venv/bin/ps5-pkg verify smoke.pkg)
+          done
+      - name: Build and test the source ZIP and zipapp
+        if: github.ref_type == 'tag'
+        run: |
+          set -euo pipefail
+          git archive --format=zip --prefix=ps5-pkg/ \
+            --output "dist/ps5-pkg-$GITHUB_REF_NAME.zip" HEAD
+          stage=$(mktemp -d "$RUNNER_TEMP/pkg-zipapp.XXXXXX")
+          cp -r src/ps5_pkg "$stage/"
+          printf '%s\n' 'import sys' 'from ps5_pkg.cli import main' 'sys.exit(main())' \
+            > "$stage/__main__.py"
+          python -m zipapp "$stage" -o dist/ps5-pkg.pyz -p "/usr/bin/env python3" -c
+          python dist/ps5-pkg.pyz --help
+      - name: Write distribution checksums
+        run: |
+          cd dist
+          sha256sum -- * > "$RUNNER_TEMP/SHA256SUMS.txt"
+          mv "$RUNNER_TEMP/SHA256SUMS.txt" .
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: distributions
+          path: dist/
+          if-no-files-found: error
+
+  attest:
+    needs: package
+    if: github.event_name != 'pull_request' && !github.event.repository.private
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: distributions
+          path: dist/
+      - name: Verify the packages downloaded from the build
+        run: cd dist && sha256sum -c --strict SHA256SUMS.txt
+      - name: Sign GitHub Actions provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-checksums: dist/SHA256SUMS.txt
+
+  release:
+    needs: attest
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7
+        with:
+          name: distributions
+          path: dist/
+      - name: Publish the verified artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          (cd dist && sha256sum -c --strict SHA256SUMS.txt)
+          gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" \
+            --verify-tag --generate-notes --title "PS5 PKG $GITHUB_REF_NAME"
