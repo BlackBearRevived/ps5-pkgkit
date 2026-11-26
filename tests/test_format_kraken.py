@@ -1,15 +1,16 @@
 """Exercise Kraken block and Huffman round trips with synthetic inputs."""
 
 import unittest
+from unittest.mock import patch
 
-from ps5_pkgkit.format import kraken
+from ps5_pkgkit.format import kraken, kraken_compress
 
 
 def text_data(size):
     """Repeat a fixed text pattern to the requested length.
 
     Args:
-        size (int): Number of bytes to generate.
+        size: Integer number of bytes to generate.
 
     Returns:
         A byte string with exactly that length.
@@ -22,7 +23,7 @@ def records(size):
     """Create deterministic structured data for compression tests.
 
     Args:
-        size (int): Number of bytes to generate.
+        size: Integer number of bytes to generate.
 
     Returns:
         The generated record stream truncated to that length.
@@ -43,8 +44,8 @@ class KrakenRoundTripTests(unittest.TestCase):
         """Check exact decoding and measure the stored payload lengths.
 
         Args:
-            data (bytes): Original uncompressed block.
-            level (str): Encoder preset.
+            data: Original uncompressed block as bytes.
+            level: Encoder preset name as a string.
 
         Returns:
             Combined stored byte length of the halves.
@@ -71,6 +72,15 @@ class KrakenRoundTripTests(unittest.TestCase):
         data = bytes((index * 131 + 17) % 251 for index in range(3333))
         halves = kraken.encode_block_at(data, "fast")
         self.assertEqual(kraken.decode_block(halves, len(data)), data)
+
+    def test_parallel_blocks_match_in_serial_order(self):
+        """Compare enough distinct blocks to fill and drain the worker queue."""
+        blocks = [({"logical": i * 4096}, bytes([i]) * 4096) for i in range(9)]
+        with patch.object(kraken_compress, "ProcessPoolExecutor") as pool:
+            serial = list(kraken_compress._encoded_blocks(blocks, "fast", 1))
+            pool.assert_not_called()
+        parallel = list(kraken_compress._encoded_blocks(blocks, "fast", 2))
+        self.assertEqual(parallel, serial)
 
     def test_raw_half_decodes(self):
         """Decode an explicitly stored raw half as an unchanged payload."""

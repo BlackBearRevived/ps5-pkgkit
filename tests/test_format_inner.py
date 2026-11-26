@@ -19,8 +19,8 @@ def payload(path, size):
     """Generate deterministic fixture bytes from a path and length.
 
     Args:
-        path (str): Fixture path whose UTF-8 bytes seed the pattern.
-        size (int): Number of bytes to generate.
+        path: Fixture path string whose UTF-8 bytes seed the pattern.
+        size: Integer number of bytes to generate.
 
     Returns:
         Deterministic payload bytes.

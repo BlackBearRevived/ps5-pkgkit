@@ -159,7 +159,8 @@ def build_package(source_dir: str | Path, output_path: str | Path, *,
                   passcode: str = crypto.DEFAULT_PASSCODE,
                   timestamp: float | None = None,
                   kraken: bool = True,
-                  level: str = "balanced") -> BuildResult:
+                  level: str = "balanced",
+                  jobs: int = 1) -> BuildResult:
     """Build and verify a PS5 package from a staged base application.
 
     The staged files are read in place. The package is written to a sibling
@@ -176,19 +177,23 @@ def build_package(source_dir: str | Path, output_path: str | Path, *,
         timestamp: Optional Unix timestamp for the install-metadata ZIP.
         kraken: Whether to compress the inner image with Kraken.
         level: Kraken preset: fast, balanced, or smallest.
+        jobs: Maximum number of Kraken workers. One compresses serially.
+            Stored builds skip compression.
 
     Returns:
         Output path, package identifiers, digest, size, file count, and
         warnings.
 
     Raises:
-        BuildError: The source, content identifier, or firmware version is
-            invalid, or the finished package fails verification.
+        BuildError: The inputs are invalid, a Kraken worker exits unexpectedly,
+            or the finished package fails verification.
         OSError: A source file cannot be read or the destination cannot be
             written.
         ValueError: An input cannot be represented by the selected package
             layout.
     """
+    if isinstance(jobs, bool) or not isinstance(jobs, int) or jobs < 1:
+        raise BuildError("jobs must be a positive integer")
     root = Path(source_dir)
     output = Path(output_path)
     try:
@@ -290,6 +295,8 @@ def build_package(source_dir: str | Path, output_path: str | Path, *,
     mount_size = built_plan.ndblock * c.BLOCK
     compressed = None
     if kraken:
+        from concurrent.futures.process import BrokenProcessPool
+
         from .format import kraken_compress
         metadata_plain = inner.metadata_region(built_plan, (0, 0))
 
@@ -306,8 +313,12 @@ def build_package(source_dir: str | Path, output_path: str | Path, *,
             """
             return read(path)[offset:offset + length]
 
-        compressed = kraken_compress.compress(
-            built_plan, metadata_plain, inner.keystone(passcode), read_range, level)
+        try:
+            compressed = kraken_compress.compress(
+                built_plan, metadata_plain, inner.keystone(passcode), read_range, level,
+                jobs=jobs)
+        except BrokenProcessPool as error:
+            raise BuildError("a Kraken worker exited unexpectedly") from error
         layout = kraken_compress.layout(
             compressed,
             [built_plan.files[index].logical_offset for index in built_plan.afid_order])

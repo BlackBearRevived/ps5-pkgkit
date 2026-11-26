@@ -1,4 +1,4 @@
-"""Assemble the outer PFS image and its layout descriptor.
+"""Wrap the stored inner image and its descriptor in the outer PFS image.
 
 The stored inner image comes first, followed by its descriptor, the superblock,
 inode table, root directory, flat-path table, indirect tables, and uroot

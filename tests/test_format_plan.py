@@ -9,8 +9,7 @@ def source(paths):
     """Materialize a sequence of source paths and sizes for the planner.
 
     Args:
-        paths (Iterable of tuples): Source-relative paths paired with byte
-            lengths.
+        paths: Iterable of (source-relative path, byte length) tuples.
 
     Returns:
         A list of path and size pairs in input order.

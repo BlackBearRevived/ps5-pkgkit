@@ -42,6 +42,8 @@ def main(argv: list[str] | None = None) -> int:
                        help="store the inner image instead of Kraken-compressing it")
     build.add_argument("--level", choices=("fast", "balanced", "smallest"),
                        default="balanced", help="Kraken compression level")
+    build.add_argument("--jobs", type=int, metavar="N", default=1,
+                       help="use up to N Kraken workers (default: 1, serial)")
     build.add_argument("--json", action="store_true", help="print a machine-readable report")
     inspect = commands.add_parser("inspect-source", help="validate and hash a staged title folder")
     inspect.add_argument("source", type=Path)
@@ -51,13 +53,15 @@ def main(argv: list[str] | None = None) -> int:
     verify.add_argument("--sha256", help="compare the entire file with a trusted SHA-256")
     verify.add_argument("--json", action="store_true", help="print a machine-readable report")
     args = parser.parse_args(argv)
+    if args.command == "build" and args.jobs < 1:
+        build.error("--jobs must be a positive integer")
 
     try:
         if args.command == "build":
             result = build_package(
                 args.source, args.output, content_id=args.content_id,
                 firmware=args.firmware, language=args.language,
-                kraken=not args.stored, level=args.level)
+                kraken=not args.stored, level=args.level, jobs=args.jobs)
             if args.json:
                 print(json.dumps(asdict(result), default=str))
             else:

@@ -191,8 +191,8 @@ def _general_digests(head: bytes, descriptor: bytes, game_digest: bytes,
         head: Main container header bytes.
         descriptor: Image descriptor bytes.
         game_digest: SHA3-256 digest of the outer superblock.
-        entry_digest (Callable): Lookup from entry ID to raw digest, or None if
-            absent.
+        entry_digest: Callable that takes an entry ID and returns its raw
+            digest, or None if the entry is absent.
 
     Returns:
         The general-digests payload.
@@ -235,8 +235,8 @@ class Facts:
 
     Attributes:
         container_size: Total padded container size in bytes.
-        mandatory_size: Size of the prefix through the mandatory entries, in
-            bytes.
+        mandatory_size: Container-relative byte offset of the image-digests
+            entry, published as mandatory-size in the install manifest.
         body_offset: Container-relative byte offset of the body.
         body_size: Length of the body, including trailing padding.
         body_digest: SHA3-256 digest of the padded body.
@@ -297,7 +297,8 @@ class CntParams:
         content_type: Numeric content type for the title.
         drm_type: Numeric DRM type recorded by the writer.
         content_flags: Bit flags describing the package content.
-        inner_size: Logical inner-image size in bytes.
+        inner_size: Logical inner-image size in bytes, retained for reference
+            parity only.
     """
     content_id: str
     param_json: bytes

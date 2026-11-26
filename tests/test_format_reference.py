@@ -94,7 +94,7 @@ class ReferenceRepairTests(unittest.TestCase):
         """Read a fixture executable and return its size and repair plan.
 
         Args:
-            relative (str): Executable path relative to the staged source.
+            relative: Executable path string relative to the staged source.
 
         Returns:
             Original byte length and the repair plan, if any.

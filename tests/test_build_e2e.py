@@ -4,6 +4,7 @@ Use the staged title and reference package from the configured fixture
 directory. The parity test reuses the reference ZIP timestamp.
 """
 
+import filecmp
 import hashlib
 import io
 import os
@@ -65,7 +66,7 @@ class BuildEndToEndTests(unittest.TestCase):
 class ReferenceParityTest(unittest.TestCase):
     """Compare the compressed build against the reference byte stream."""
     def test_compressed_build_is_byte_identical(self):
-        """Reuse the reference ZIP timestamp and compare SHA-256 and size."""
+        """Rebuild the reference byte for byte with one and four Kraken workers."""
         data = PACKAGE.read_bytes()
         cnt_at = int.from_bytes(data[0x58:0x60], "little")
         si_at = cnt_at + int.from_bytes(data[cnt_at + 0x7C:cnt_at + 0x80], "big")
@@ -73,10 +74,14 @@ class ReferenceParityTest(unittest.TestCase):
         year, month, day, hour, minute, second = archive.infolist()[0].date_time
         stamp = time.mktime((year, month, day, hour, minute, second, 0, 0, -1))
         with tempfile.TemporaryDirectory() as directory:
-            output = Path(directory) / "hello.pkg"
-            result = build_package(SOURCE, output, timestamp=stamp)
-            self.assertEqual(result.sha256, hashlib.sha256(data).hexdigest())
-            self.assertEqual(result.size, len(data))
+            expected_digest = hashlib.sha256(data).hexdigest()
+            for jobs in (1, 4):
+                with self.subTest(jobs=jobs):
+                    output = Path(directory) / f"hello-{jobs}.pkg"
+                    result = build_package(SOURCE, output, timestamp=stamp, jobs=jobs)
+                    self.assertEqual(result.sha256, expected_digest)
+                    self.assertEqual(result.size, len(data))
+                    self.assertTrue(filecmp.cmp(output, PACKAGE, shallow=False))
 
 
 if __name__ == "__main__":

@@ -100,7 +100,11 @@ def zip_members(members: list[tuple[str, bytes]],
 
 
 def _tlv(tag: bytes, payload: bytes) -> bytes:
-    """Pack a four-byte tag, length, and payload as one metric record."""
+    """Pack a tag, length, and payload as one metric record.
+
+    Write the four-byte tag in reverse order, followed by version byte 1,
+    three zero bytes, the 64-bit little-endian payload length, and the payload.
+    """
     return bytes([tag[3], tag[2], tag[1], tag[0], 1, 0, 0, 0]) + \
         len(payload).to_bytes(8, "little") + payload
 
@@ -151,8 +155,8 @@ def naps_meta_18(stored_size: int, mount_size: int, block_digests: list[bytes],
         data_end: Logical byte offset at the end of file data.
         meta_base: Logical byte offset of the metadata region.
         game_digest: Digest of the outer superblock.
-        blocks (list of tuples or None): Optional prepared metric block map,
-            otherwise derived from the stored layout.
+        blocks: List of prepared metric block tuples, or None to derive them
+            from the stored layout.
 
     Returns:
         The TLV stream encrypted as one AES-128-XTS data unit.
@@ -246,7 +250,7 @@ def kraken_blocks(image) -> list[tuple]:
     """Build metric block records for a Kraken-compressed image.
 
     Args:
-        image (KrakenImage): Compressed image with its block descriptors.
+        image: A KrakenImage with stored block descriptors.
 
     Returns:
         One metric block tuple per stored block, in image order.
@@ -273,7 +277,7 @@ def kraken_meta_18(image, mount_size: int, metadata_plain: bytes,
     """Build the NAPS metric stream for a compressed image.
 
     Args:
-        image (KrakenImage): Compressed image and its stored block layout.
+        image: A KrakenImage with its stored block layout.
         mount_size: Logical mount length in bytes.
         metadata_plain: Plaintext inner-image metadata.
         files: Triples of path, logical offset, and size in AFID order.

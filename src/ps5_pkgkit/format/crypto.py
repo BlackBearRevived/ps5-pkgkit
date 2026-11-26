@@ -24,7 +24,7 @@ def sha3_file(path) -> bytes:
     """Compute SHA3-256 over a file in chunks.
 
     Args:
-        path (str or os.PathLike): Path of the file to hash.
+        path: Path to the file as a str or os.PathLike object.
 
     Returns:
         Raw SHA3-256 digest.

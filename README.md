@@ -114,13 +114,14 @@ After installation, `python -m ps5_pkgkit` also works.
 | `build` | `--language CODE` | title metadata or fallback | Select a single PlayGo language. |
 | `build` | `--stored` | off | Store the inner image uncompressed. |
 | `build` | `--level LEVEL` | `balanced` | Choose `fast`, `balanced`, or `smallest` for Kraken compression. |
+| `build` | `--jobs N` | `1` | Use up to N worker processes for Kraken compression. One runs serially. Stored builds skip this step. |
 | `verify` | `PACKAGE` | required | Package file to verify. |
 | `verify` | `--sha256 SHA256` | none | Compare the whole file with a trusted SHA-256. |
 | All subcommands | `--json` | off | Print a machine-readable report. |
 
 ```bash
 ps5-pkgkit inspect-source PPSA99771 --json
-ps5-pkgkit build PPSA99771 -o HelloWorld.pkg --stored
+ps5-pkgkit build PPSA99771 -o HelloWorld.pkg --jobs 4
 ps5-pkgkit verify HelloWorld.pkg
 ps5-pkgkit verify HelloWorld.pkg --sha256 "$EXPECTED_SHA256" --json
 ```
@@ -128,7 +129,9 @@ ps5-pkgkit verify HelloWorld.pkg --sha256 "$EXPECTED_SHA256" --json
 The CLI exits with status 1 for a build, inspection, or verification failure
 and status 2 for a usage error. Python callers can use `build_package()`,
 `inspect_source()`, and `verify_package()` from `ps5_pkgkit` and catch
-`BuildError`, `SourceError`, or `VerificationError`, respectively.
+`BuildError`, `SourceError`, or `VerificationError`, respectively. For parallel builds
+from a Python script, call `build_package(..., jobs=4)` inside an
+`if __name__ == "__main__":` guard so worker processes can import the script.
 
 ## Validation
 
@@ -180,8 +183,8 @@ distribution, source ZIP, zipapp, and `SHA256SUMS.txt`. See the
 - The builder targets staged PS5 base applications with `applicationCategoryType`
   set to `0` and `applicationDrmType` set to `free` in the source metadata.
 - Kraken compression prioritizes reference parity. The Hello World inner image
-  takes about half a minute to compress in CPython, and larger titles take
-  longer. Use `--stored` when you want to skip compression.
+  takes about half a minute to compress serially in CPython. Use `--jobs N`
+  to compress blocks in parallel or `--stored` to skip compression.
 - Host verification checks package integrity. Hardware results are recorded
   separately in the reference record.
 

@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+from collections import deque
+from collections.abc import Iterable, Iterator
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 import hashlib
+import sys
 
 from . import kraken
 from .crypto import sha3
@@ -73,8 +77,7 @@ def plan_blocks(plan) -> tuple[list[dict], int]:
     """Split the planned mount into file, padding, and metadata blocks.
 
     Args:
-        plan (Plan): Inner-image plan with logical file positions and mount
-            geometry.
+        plan: A Plan with logical file positions and mount geometry.
 
     Returns:
         Block dictionaries in logical order and the byte offset at which the
@@ -116,17 +119,70 @@ def plan_blocks(plan) -> tuple[list[dict], int]:
     return todo, end
 
 
-def compress(plan, metadata: bytes, keystone: bytes, read, level: str = "balanced") -> KrakenImage:
+def _encode_checked(data: bytes, level: str, logical: int) -> list[kraken.Half]:
+    """Encode a complete Kraken block and check its decoded bytes.
+
+    Args:
+        data: Uncompressed block, including any padding.
+        level: Kraken compression preset.
+        logical: Mount offset to report if the round-trip check fails.
+
+    Returns:
+        Encoded halves in their original order.
+
+    Raises:
+        ValueError: The encoded block does not decode to the input bytes.
+    """
+    halves = kraken.encode_block_at(data, level)
+    if kraken.decode_block(halves, len(data)) != data:
+        raise ValueError(f"block at {logical:#x} does not round-trip")
+    return halves
+
+
+def _encoded_blocks(blocks: Iterable[tuple[dict, bytes]], level: str,
+                    jobs: int) -> Iterator[tuple[dict, bytes, list[kraken.Half]]]:
+    """Encode blocks and yield their results in layout order.
+
+    Args:
+        blocks: Planned blocks paired with their uncompressed bytes.
+        level: Kraken compression preset.
+        jobs: Maximum number of workers. One runs in the calling process.
+
+    Yields:
+        Each planned block, its uncompressed bytes, and its checked halves.
+    """
+    if jobs == 1:
+        for item, data in blocks:
+            yield item, data, _encode_checked(data, level, item["logical"])
+        return
+
+    # ProcessPoolExecutor supports at most 61 workers on Windows.
+    workers = min(jobs, 61) if sys.platform == "win32" else jobs
+    with ProcessPoolExecutor(max_workers=workers) as pool:
+        pending = deque()
+        for item, data in blocks:
+            future = pool.submit(_encode_checked, data, level, item["logical"])
+            pending.append((item, data, future))
+            if len(pending) == 2 * workers:
+                first_item, first_data, first_future = pending.popleft()
+                yield first_item, first_data, first_future.result()
+        for item, data, future in pending:
+            yield item, data, future.result()
+
+
+def compress(plan, metadata: bytes, keystone: bytes, read, level: str = "balanced", *,
+             jobs: int = 1) -> KrakenImage:
     """Encode and round-trip-check each planned Kraken block.
 
     Args:
-        plan (Plan): Inner-image plan for the compressed layout.
+        plan: A Plan for the compressed inner-image layout.
         metadata: Serialized inner-image metadata filling the mount above its
             base.
         keystone: Payload for the generated keystone, if the plan requests one.
-        read (Callable): Range reader taking a file path, byte offset, and byte
-            count.
+        read: Callable that takes a file path, byte offset, and byte count,
+            and returns the requested bytes.
         level: Kraken compression preset.
+        jobs: Maximum number of workers used to encode and check blocks.
 
     Returns:
         Padded stored image, block descriptions, and file offsets and digests.
@@ -147,29 +203,33 @@ def compress(plan, metadata: bytes, keystone: bytes, read, level: str = "balance
     open_afid: int | None = None
     hasher = None
     cursor = 0
-    for item in todo:
-        if item["owner"] == "file":
-            real = item["real"]
-            if real == 0:
-                data = b""
-            elif item["keystone"]:
-                start = item["offset"]
-                data = keystone[start:start + real]
-                if len(data) != real:
-                    raise ValueError("keystone is short")
+
+    def input_blocks() -> Iterator[tuple[dict, bytes]]:
+        """Yield planned blocks with their padded bytes in mount order."""
+        for item in todo:
+            if item["owner"] == "file":
+                real = item["real"]
+                if real == 0:
+                    data = b""
+                elif item["keystone"]:
+                    start = item["offset"]
+                    data = keystone[start:start + real]
+                    if len(data) != real:
+                        raise ValueError("keystone is short")
+                else:
+                    data = read(item["path"], item["offset"], real)
+                    if len(data) != real:
+                        raise ValueError("a source file is short")
+                data += bytes(item["len"] - len(data))
+            elif item["owner"] == "meta":
+                at = item["logical"] - plan.meta_base
+                data = metadata[at:at + item["len"]]
             else:
-                data = read(item["path"], item["offset"], real)
-                if len(data) != real:
-                    raise ValueError("a source file is short")
-            data += bytes(item["len"] - len(data))
-        elif item["owner"] == "meta":
-            at = item["logical"] - plan.meta_base
-            data = metadata[at:at + item["len"]]
-        else:
-            data = bytes(item["len"])
-        halves = kraken.encode_block_at(data, level)
-        if kraken.decode_block(halves, len(data)) != data:
-            raise ValueError(f"block at {item['logical']:#x} does not round-trip")
+                data = bytes(item["len"])
+            yield item, data
+
+    workers = min(jobs, max(1, len(todo)))
+    for item, data, halves in _encoded_blocks(input_blocks(), level, workers):
         if item["owner"] == "file":
             afid = item["afid"]
             if open_afid != afid:
