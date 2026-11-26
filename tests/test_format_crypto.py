@@ -1,7 +1,7 @@
 import unittest
 
-from ps5_pkg.format import crypto
-from ps5_pkg.format.aes import Aes128, Xts, cbc_decrypt, cbc_encrypt
+from ps5_pkgkit.format import crypto
+from ps5_pkgkit.format.aes import Aes128, Xts, cbc_decrypt, cbc_encrypt
 
 
 class CryptoVectorTests(unittest.TestCase):

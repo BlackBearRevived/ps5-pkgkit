@@ -1,4 +1,4 @@
-"""Run the CLI with ``python -m ps5_pkg``."""
+"""Run the CLI with ``python -m ps5_pkgkit``."""
 
 import sys
 

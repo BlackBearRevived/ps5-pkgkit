@@ -1,4 +1,4 @@
-"""Command-line interface for ps5-pkg."""
+"""Command-line interface for ps5-pkgkit."""
 
 import argparse
 from dataclasses import asdict
@@ -14,7 +14,7 @@ from .verification import VerificationError, verify_package
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="ps5-pkg",
+        prog="ps5-pkgkit",
         description="Build PS5 packages from staged title folders, inspect folders and "
                     "verify existing packages.",
     )
@@ -50,7 +50,7 @@ def main(argv: list[str] | None = None) -> int:
                 print(json.dumps(asdict(result), default=str))
             else:
                 for warning in result.warnings:
-                    print(f"ps5-pkg: warning: {warning}", file=sys.stderr)
+                    print(f"ps5-pkgkit: warning: {warning}", file=sys.stderr)
                 print(f"Built {result.output} for {result.title_id} "
                       f"{result.content_version} ({result.file_count} files)")
                 print(f"Content ID: {result.content_id}")
@@ -65,7 +65,7 @@ def main(argv: list[str] | None = None) -> int:
         if getattr(args, "json", False):
             print(json.dumps({"error": str(error)}), file=sys.stderr)
         else:
-            print(f"ps5-pkg: {error}", file=sys.stderr)
+            print(f"ps5-pkgkit: {error}", file=sys.stderr)
         return 1
 
     if args.json:

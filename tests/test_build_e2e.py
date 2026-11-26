@@ -7,10 +7,10 @@ import time
 import unittest
 import zipfile
 
-from ps5_pkg import BuildError, build_package, verify_package
+from ps5_pkgkit import BuildError, build_package, verify_package
 
-DEFAULT = Path("/mnt/c/Users/denis/Documents/PolarComet/ps5-pkg/.artifacts/hello-world")
-FIXTURE = Path(os.environ.get("PS5_PKG_REFERENCE", DEFAULT))
+DEFAULT = Path(__file__).resolve().parents[1] / ".artifacts" / "hello-world"
+FIXTURE = Path(os.environ.get("PS5_PKGKIT_REFERENCE", DEFAULT))
 SOURCE = FIXTURE / "PPSA99771"
 PACKAGE = FIXTURE / "PS5-PKG-Hello-World.pkg"
 

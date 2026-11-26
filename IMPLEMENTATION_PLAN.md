@@ -1,4 +1,4 @@
-# ps5-pkg implementation plan
+# ps5-pkgkit implementation plan
 
 ## First release
 
@@ -22,12 +22,12 @@ Use each checkbox to track work. Close a milestone by linking its commit or CI r
 
 ## 2. Define the library and CLI contract
 
-- [x] Add `pyproject.toml`, an importable `ps5_pkg` package and the `ps5-pkg` console entry point. Start with Python 3.11 and the standard library at runtime.
-- [x] Implement `ps5-pkg verify FILE.pkg` and `ps5_pkg.verify_package(path)` for the reference title's package profile. Report structural and container checksum errors, and accept a trusted digest for whole-file verification.
+- [x] Add `pyproject.toml`, an importable `ps5_pkgkit` package and the `ps5-pkgkit` console entry point. Start with Python 3.11 and the standard library at runtime.
+- [x] Implement `ps5-pkgkit verify FILE.pkg` and `ps5_pkgkit.verify_package(path)` for the reference title's package profile. Report structural and container checksum errors, and accept a trusted digest for whole-file verification.
 - [ ] Expose `build_package(source_dir, output_path)` and `verify_package(path)`. Return structured results with title metadata, warnings, failures and output size. Keep CLI formatting and exit codes in the CLI layer.
-- [ ] Implement `ps5-pkg build TITLE_FOLDER --output FILE.pkg` and `ps5-pkg verify FILE.pkg`. Include path-specific diagnostics and documented nonzero exit codes. Leave an existing destination intact on failure.
+- [ ] Implement `ps5-pkgkit build TITLE_FOLDER --output FILE.pkg` and `ps5-pkgkit verify FILE.pkg`. Include path-specific diagnostics and documented nonzero exit codes. Leave an existing destination intact on failure.
 - [ ] Validate root `eboot.bin`, readable `sce_sys/param.json`, identity fields and supported title type. Define consistent handling of case collisions, traversal, symlinks, empty files and directories. Exercise Unicode paths on every supported OS.
-- [x] Add `inspect_source(path)` and `ps5-pkg inspect-source TITLE_FOLDER` as a read-only preflight. It validates the base-app identity, rejects unsupported paths and links, and returns a deterministic per-file SHA-256 inventory.
+- [x] Add `inspect_source(path)` and `ps5-pkgkit inspect-source TITLE_FOLDER` as a read-only preflight. It validates the base-app identity, rejects unsupported paths and links, and returns a deterministic per-file SHA-256 inventory.
 
 **Acceptance.** Tests invoke the installed command and import the library from outside the checkout. Both interfaces report the same validation outcomes, and scanning preserves the source manifest.
 
@@ -64,7 +64,7 @@ The reference profile relies on a patched authentication path. Writer and consol
 ## 6. Distribute the tool and integrate the boilerplate
 
 - [ ] Run unit tests and end-to-end CLI tests in GitHub Actions on the supported OS and Python matrix. Build the wheel and source distribution from a clean checkout. Test the wheel itself in fresh environments.
-- [ ] Exercise three user paths against the same release wheel: `python -m pip install <wheel>`, `uv tool install <wheel>` and a one-shot `uvx --from <wheel> ps5-pkg` invocation. Run both build and verify after installation and document copyable examples with the actual wheel URL.
+- [ ] Exercise three user paths against the same release wheel: `python -m pip install <wheel>`, `uv tool install <wheel>` and a one-shot `uvx --from <wheel> ps5-pkgkit` invocation. Run both build and verify after installation and document copyable examples with an authenticated release download.
 - [ ] Attach the tested wheel, source distribution and checksums to a versioned GitHub Release. Set up build provenance and verify it against the workflow and commit wherever supported by the repository's visibility and account plan. Keep release access consistent with repository visibility. Public PyPI distribution is a separate publication decision.
 - [ ] After the hardware gate, add an opt-in target in the boilerplate that calls a pinned release of this CLI on `dist/<TITLE_ID>/`. Have its release workflow verify the resulting `.pkg` and attest that artifact against the boilerplate commit. Test the folder ZIP flow alongside it.
 

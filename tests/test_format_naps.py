@@ -2,11 +2,11 @@ import os
 from pathlib import Path
 import unittest
 
-from ps5_pkg.format import constants as c
-from ps5_pkg.format import naps
+from ps5_pkgkit.format import constants as c
+from ps5_pkgkit.format import naps
 
-DEFAULT = Path("/mnt/c/Users/denis/Documents/PolarComet/ps5-pkg/.artifacts/hello-world")
-FIXTURE = Path(os.environ.get("PS5_PKG_REFERENCE", DEFAULT))
+DEFAULT = Path(__file__).resolve().parents[1] / ".artifacts" / "hello-world"
+FIXTURE = Path(os.environ.get("PS5_PKGKIT_REFERENCE", DEFAULT))
 PACKAGE = FIXTURE / "PS5-PKG-Hello-World.pkg"
 
 

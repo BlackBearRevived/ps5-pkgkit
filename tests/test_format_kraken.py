@@ -1,6 +1,6 @@
 import unittest
 
-from ps5_pkg.format import kraken
+from ps5_pkgkit.format import kraken
 
 
 def text_data(size):

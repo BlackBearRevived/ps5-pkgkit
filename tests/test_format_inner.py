@@ -1,6 +1,6 @@
 import unittest
 
-from ps5_pkg.format import constants, inner, plan
+from ps5_pkgkit.format import constants, inner, plan
 
 
 def make_plan():

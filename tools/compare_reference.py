@@ -16,7 +16,7 @@ import sys
 import time
 import zipfile
 
-from ps5_pkg import build_package
+from ps5_pkgkit import build_package
 
 
 def main() -> int:

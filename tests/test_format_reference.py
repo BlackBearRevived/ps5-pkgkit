@@ -4,7 +4,7 @@ import os
 from pathlib import Path
 import unittest
 
-from ps5_pkg.format import (
+from ps5_pkgkit.format import (
     cnt,
     constants as c,
     crypto,
@@ -21,8 +21,8 @@ from ps5_pkg.format import (
     si,
 )
 
-DEFAULT = Path("/mnt/c/Users/denis/Documents/PolarComet/ps5-pkg/.artifacts/hello-world")
-FIXTURE = Path(os.environ.get("PS5_PKG_REFERENCE", DEFAULT))
+DEFAULT = Path(__file__).resolve().parents[1] / ".artifacts" / "hello-world"
+FIXTURE = Path(os.environ.get("PS5_PKGKIT_REFERENCE", DEFAULT))
 SOURCE = FIXTURE / "PPSA99771"
 PACKAGE = FIXTURE / "PS5-PKG-Hello-World.pkg"
 
@@ -358,7 +358,7 @@ class ReferenceContainerTests(unittest.TestCase):
 
 
 def encrypt_entry(material: bytes, stored: bytes) -> bytes:
-    from ps5_pkg.format.aes import cbc_decrypt
+    from ps5_pkgkit.format.aes import cbc_decrypt
     return cbc_decrypt(material[16:], material[:16], stored)
 
 

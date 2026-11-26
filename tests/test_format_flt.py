@@ -1,6 +1,6 @@
 import unittest
 
-from ps5_pkg.format import flt
+from ps5_pkgkit.format import flt
 
 
 class FlatPathTableTests(unittest.TestCase):

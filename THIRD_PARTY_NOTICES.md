@@ -1,6 +1,6 @@
 # Third-party notices
 
-ps5-pkg is licensed under GPL-3.0-or-later (see `LICENSE`).
+ps5-pkgkit is licensed under GPL-3.0-or-later (see `LICENSE`).
 
 ## PS5Upload
 
@@ -12,7 +12,7 @@ Its author records parts of that work as ported or derived from PS5 Dump Forge
 
 ## Key material
 
-`src/ps5_pkg/format/keys.py` vendors the fixed debug-package constants that
+`src/ps5_pkgkit/format/keys.py` vendors the fixed debug-package constants that
 reference uses (RSA public moduli, the debug RIF key pair, the keystone HMAC
 keys and the `naps_meta_18` AES-XTS keys). ps5upload records that they came from
 LibProsperoPKG's key data and that their use is a deliberate distribution

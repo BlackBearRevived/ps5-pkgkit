@@ -1,8 +1,8 @@
 import unittest
 
-from ps5_pkg.format import fih
-from ps5_pkg.format.constants import BLOCK
-from ps5_pkg.format.crypto import sha3
+from ps5_pkgkit.format import fih
+from ps5_pkgkit.format.constants import BLOCK
+from ps5_pkgkit.format.crypto import sha3
 
 
 class FihTests(unittest.TestCase):

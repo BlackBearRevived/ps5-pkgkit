@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regenerate ps5_pkg/format/keys.py from a reference ps5upload checkout.
+"""Regenerate ps5_pkgkit/format/keys.py from a reference ps5upload checkout.
 
 The constants are vendored (see the generated module's docstring). This tool
 keeps the provenance and the exact byte values reproducible:
@@ -43,7 +43,7 @@ def main() -> int:
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path(__file__).resolve().parents[1] / "src/ps5_pkg/format/keys.py",
+        default=Path(__file__).resolve().parents[1] / "src/ps5_pkgkit/format/keys.py",
     )
     args = parser.parse_args()
     text = args.keys_rs.read_text(encoding="utf-8")

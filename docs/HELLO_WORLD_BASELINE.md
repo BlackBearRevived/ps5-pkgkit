@@ -37,6 +37,6 @@ The launch controller targeted only `PPSA99771`. The kernel log recorded `launch
 
 The mounted `eboot.bin`, `sce_module/libc.prx`, `sce_sys/param.json` and `assets/banner.txt` matched the contents of the host reference package by SHA-256. The console's registered `icon0.png` matched the source artwork. Installation and launch succeeded with both readiness warnings present.
 
-The installed Python `ps5-pkg verify` command passed on the local reference and on the copy retrieved from `/data/PS5-PKG-Hello-World.pkg` over FTP. Both matched the trusted whole-file SHA-256 recorded above.
+The installed Python `ps5-pkgkit verify` command passed on the local reference and on the copy retrieved from `/data/PS5-PKG-Hello-World.pkg` over FTP. Both matched the trusted whole-file SHA-256 recorded above.
 
 The raw kernel log is saved locally under `.artifacts/hello-world/console/launch-klog.txt`. A screen capture, current firmware confirmation and a separate folder-control run are still pending.

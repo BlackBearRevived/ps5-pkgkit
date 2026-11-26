@@ -2,12 +2,13 @@ import hashlib
 from contextlib import redirect_stdout
 import io
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
 
-from ps5_pkg import SourceError, inspect_source
-from ps5_pkg.cli import main
+from ps5_pkgkit import SourceError, inspect_source
+from ps5_pkgkit.cli import main
 
 
 PARAM = {
@@ -82,7 +83,8 @@ class SourceTests(unittest.TestCase):
 
 class HelloWorldSourceTests(unittest.TestCase):
     def test_reference_source_manifest(self):
-        root = Path(".artifacts/hello-world/PPSA99771")
+        default = Path(__file__).resolve().parents[1] / ".artifacts" / "hello-world"
+        root = Path(os.environ.get("PS5_PKGKIT_REFERENCE", default)) / "PPSA99771"
         if not root.is_dir():
             self.skipTest("local Hello World staged folder unavailable")
         report = inspect_source(root)

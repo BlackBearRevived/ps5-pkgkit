@@ -1,6 +1,6 @@
 import unittest
 
-from ps5_pkg.format import plan
+from ps5_pkgkit.format import plan
 
 
 def source(paths):

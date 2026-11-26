@@ -6,7 +6,7 @@ import struct
 import tempfile
 import unittest
 
-from ps5_pkg import VerificationError, verify_package
+from ps5_pkgkit import VerificationError, verify_package
 
 
 class MalformedPackageTests(unittest.TestCase):
@@ -35,12 +35,11 @@ class HelloWorldReferenceTests(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
-        cls.reference = Path(os.environ.get(
-            "PS5_PKG_REFERENCE",
-            ".artifacts/hello-world/PS5-PKG-Hello-World.pkg",
-        ))
+        default = Path(__file__).resolve().parents[1] / ".artifacts" / "hello-world"
+        fixture = Path(os.environ.get("PS5_PKGKIT_REFERENCE", default))
+        cls.reference = fixture / "PS5-PKG-Hello-World.pkg"
         if not cls.reference.is_file():
-            raise unittest.SkipTest("set PS5_PKG_REFERENCE to the verified Hello World reference")
+            raise unittest.SkipTest("set PS5_PKGKIT_REFERENCE to the verified Hello World fixture directory")
 
     def test_verify_title_and_digest(self):
         result = verify_package(self.reference, expected_sha256=self.expected_sha256)
